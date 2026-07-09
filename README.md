@@ -34,6 +34,8 @@ litigationspace/
 └── src-app/                      ← React source (npm run dev)
 ```
 
-## Archive
+## GitHub
 
-Old copies are at: https://github.com/queensworld1984-max/litigationspace-archive
+Active code: https://github.com/queensworld1984-max/litigationspace-live
+
+Old copies are archived at: https://github.com/queensworld1984-max/litigationspace-archive
