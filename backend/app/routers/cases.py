@@ -2495,6 +2495,100 @@ async def get_uscis_status(case_id: str, current_user: dict = Depends(get_curren
 
 
 # ──────────────────────────────────────────
+# Case Notes — the case_notes table already existed (and is already wired
+# into the case-delete cascade) but no create/read/update/delete route was
+# ever built, so the Notes tab has been silently failing to save.
+# ──────────────────────────────────────────
+
+class CaseNoteCreate(BaseModel):
+    content: str
+
+
+class CaseNoteUpdate(BaseModel):
+    content: str
+
+
+@router.get("/{case_id}/notes")
+async def list_case_notes(case_id: str, current_user: dict = Depends(get_current_user)):
+    """List notes for a case, newest first."""
+    tenant_id = current_user["tenant_id"]
+    with get_db() as db:
+        case = db.execute("SELECT id FROM cases WHERE id = ? AND tenant_id = ?", (case_id, tenant_id)).fetchone()
+        if not case:
+            raise HTTPException(status_code=404, detail="Case not found")
+        rows = db.execute(
+            "SELECT * FROM case_notes WHERE case_id = ? ORDER BY created_at DESC",
+            (case_id,)
+        ).fetchall()
+        return [dict(r) for r in rows]
+
+
+@router.post("/{case_id}/notes")
+async def create_case_note(case_id: str, req: CaseNoteCreate, current_user: dict = Depends(get_current_user)):
+    """Add a note to a case."""
+    tenant_id = current_user["tenant_id"]
+    content = req.content.strip()
+    if not content:
+        raise HTTPException(status_code=400, detail="Note content is required")
+
+    with get_db() as db:
+        case = db.execute("SELECT id FROM cases WHERE id = ? AND tenant_id = ?", (case_id, tenant_id)).fetchone()
+        if not case:
+            raise HTTPException(status_code=404, detail="Case not found")
+
+        note_id = generate_id()
+        now = datetime.now(timezone.utc).isoformat()
+        db.execute(
+            """INSERT INTO case_notes (id, case_id, tenant_id, content, created_by, created_at, updated_at)
+               VALUES (?, ?, ?, ?, ?, ?, ?)""",
+            (note_id, case_id, tenant_id, content, current_user["sub"], now, now)
+        )
+        row = db.execute("SELECT * FROM case_notes WHERE id = ?", (note_id,)).fetchone()
+        return dict(row)
+
+
+@router.put("/{case_id}/notes/{note_id}")
+async def update_case_note(case_id: str, note_id: str, req: CaseNoteUpdate,
+                            current_user: dict = Depends(get_current_user)):
+    """Edit an existing note."""
+    tenant_id = current_user["tenant_id"]
+    content = req.content.strip()
+    if not content:
+        raise HTTPException(status_code=400, detail="Note content is required")
+
+    with get_db() as db:
+        note = db.execute(
+            "SELECT id FROM case_notes WHERE id = ? AND case_id = ? AND tenant_id = ?",
+            (note_id, case_id, tenant_id)
+        ).fetchone()
+        if not note:
+            raise HTTPException(status_code=404, detail="Note not found")
+
+        now = datetime.now(timezone.utc).isoformat()
+        db.execute(
+            "UPDATE case_notes SET content = ?, updated_at = ? WHERE id = ?",
+            (content, now, note_id)
+        )
+        row = db.execute("SELECT * FROM case_notes WHERE id = ?", (note_id,)).fetchone()
+        return dict(row)
+
+
+@router.delete("/{case_id}/notes/{note_id}")
+async def delete_case_note(case_id: str, note_id: str, current_user: dict = Depends(get_current_user)):
+    """Delete a note."""
+    tenant_id = current_user["tenant_id"]
+    with get_db() as db:
+        note = db.execute(
+            "SELECT id FROM case_notes WHERE id = ? AND case_id = ? AND tenant_id = ?",
+            (note_id, case_id, tenant_id)
+        ).fetchone()
+        if not note:
+            raise HTTPException(status_code=404, detail="Note not found")
+        db.execute("DELETE FROM case_notes WHERE id = ?", (note_id,))
+        return {"message": "Note deleted"}
+
+
+# ──────────────────────────────────────────
 # Case Team & Access — per-case collaborator invites
 # ──────────────────────────────────────────
 

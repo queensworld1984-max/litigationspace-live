@@ -920,6 +920,9 @@ def init_db():
 
         # Per-case external collaborators (Case Team & Access invite panel)
         _create_case_collaborators_table(db)
+
+        # Case notes table (Case Vault "Notes" tab)
+        _create_case_notes_table(db)
         _migrate_case_campaigns_type_column(db)
         _migrate_case_campaigns_approval_columns(db)
 
@@ -2235,6 +2238,29 @@ def _migrate_blog_articles_status(db):
             print("[MIGRATION] Added status column to blog_articles table")
     except Exception as e:
         print(f"[MIGRATION WARNING] blog_articles status: {e}")
+
+
+def _create_case_notes_table(db):
+    """The case_notes table was already referenced by the case-delete cascade
+    (DELETE FROM case_notes WHERE case_id = ?) and real notes existed on the
+    live .com database, but there was no CREATE TABLE anywhere in source —
+    it only existed there via undocumented manual DB setup. Fresh databases
+    (litigationspace.org, any future clone) never had the table at all, so
+    every note read/write would fail with "no such table: case_notes"."""
+    db.executescript("""
+        CREATE TABLE IF NOT EXISTS case_notes (
+            id TEXT PRIMARY KEY,
+            case_id TEXT NOT NULL,
+            tenant_id TEXT NOT NULL,
+            content TEXT NOT NULL,
+            created_by TEXT,
+            created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+            updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+            FOREIGN KEY (case_id) REFERENCES cases(id),
+            FOREIGN KEY (tenant_id) REFERENCES tenants(id)
+        );
+        CREATE INDEX IF NOT EXISTS idx_case_notes_case ON case_notes(case_id);
+    """)
 
 
 def _migrate_cases_jurisdiction_fields(db):
