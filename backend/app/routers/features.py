@@ -14,6 +14,7 @@ from app.database import get_db
 from app.utils.auth import get_current_user
 from app.utils.model_router import get_model_for_user_task
 from app.utils.credits import credit_gate, deduct_credits
+from app.utils.case_auth import resolve_case_access
 
 logger = logging.getLogger(__name__)
 
@@ -37,9 +38,10 @@ class DiscoveryItemCreate(BaseModel):
 @router.get("/cases/{case_id}/discovery")
 async def list_discovery_items(case_id: str, user=Depends(get_current_user)):
     with get_db() as db:
+        case = resolve_case_access(case_id, user, db, required_permission="view_discovery")
         items = db.execute(
             "SELECT * FROM discovery_items WHERE case_id = ? AND tenant_id = ? ORDER BY created_at DESC",
-            (case_id, user["tenant_id"])
+            (case_id, case["tenant_id"])
         ).fetchall()
         return [dict(r) for r in items]
 
@@ -48,10 +50,11 @@ async def list_discovery_items(case_id: str, user=Depends(get_current_user)):
 async def create_discovery_item(case_id: str, data: DiscoveryItemCreate, user=Depends(get_current_user)):
     item_id = str(uuid.uuid4())[:12]
     with get_db() as db:
+        case = resolve_case_access(case_id, user, db, required_permission="view_discovery")
         db.execute(
             """INSERT INTO discovery_items (id, case_id, tenant_id, item_number, item_description, party, date_served, date_due, status, notes)
                VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)""",
-            (item_id, case_id, user["tenant_id"], data.item_number, data.item_description,
+            (item_id, case_id, case["tenant_id"], data.item_number, data.item_description,
              data.party, data.date_served, data.date_due, data.status, data.notes)
         )
     return {"id": item_id, "message": "Discovery item created"}
@@ -97,9 +100,10 @@ class WitnessCreate(BaseModel):
 @router.get("/cases/{case_id}/witnesses")
 async def list_witnesses(case_id: str, user=Depends(get_current_user)):
     with get_db() as db:
+        case = resolve_case_access(case_id, user, db, required_permission="view_witnesses")
         witnesses = db.execute(
             "SELECT * FROM witnesses WHERE case_id = ? AND tenant_id = ? ORDER BY created_at DESC",
-            (case_id, user["tenant_id"])
+            (case_id, case["tenant_id"])
         ).fetchall()
         return [dict(r) for r in witnesses]
 
@@ -108,11 +112,12 @@ async def list_witnesses(case_id: str, user=Depends(get_current_user)):
 async def create_witness(case_id: str, data: WitnessCreate, user=Depends(get_current_user)):
     witness_id = str(uuid.uuid4())[:12]
     with get_db() as db:
+        case = resolve_case_access(case_id, user, db, required_permission="view_witnesses")
         db.execute(
             """INSERT INTO witnesses (id, case_id, tenant_id, name, witness_type, contact_info, phone, email,
                deposition_date, deposition_summary, key_admissions, cross_exam_questions, notes)
                VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)""",
-            (witness_id, case_id, user["tenant_id"], data.name, data.witness_type,
+            (witness_id, case_id, case["tenant_id"], data.name, data.witness_type,
              data.contact_info, data.phone, data.email, data.deposition_date,
              data.deposition_summary, data.key_admissions, data.cross_exam_questions, data.notes)
         )

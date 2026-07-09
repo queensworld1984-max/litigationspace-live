@@ -917,6 +917,9 @@ def init_db():
         # Staged 5-step escalation campaigns — never had a CREATE TABLE anywhere
         _fix_orphaned_campaign_emails_table(db)
         _create_outreach_campaign_tables(db)
+
+        # Per-case external collaborators (Case Team & Access invite panel)
+        _create_case_collaborators_table(db)
         _migrate_case_campaigns_type_column(db)
         _migrate_case_campaigns_approval_columns(db)
 
@@ -1655,6 +1658,37 @@ def _create_outreach_campaign_tables(db):
             FOREIGN KEY (contact_id) REFERENCES case_contacts(id)
         );
         CREATE INDEX IF NOT EXISTS idx_campaign_emails_campaign ON campaign_emails(campaign_id, step_number);
+    """)
+
+
+def _create_case_collaborators_table(db):
+    """External per-case collaborators (clients, co-counsel, paralegals, experts,
+    witnesses, observers) invited from the "Case Team & Access" panel on a case's
+    detail page. Deliberately separate from `users`/tenant membership: a collaborator
+    is scoped to exactly one case via case_id + user_id, not a tenant_id match, so
+    they never see the inviting firm's other cases."""
+    db.executescript("""
+        CREATE TABLE IF NOT EXISTS case_collaborators (
+            id TEXT PRIMARY KEY,
+            case_id TEXT NOT NULL,
+            tenant_id TEXT NOT NULL,
+            user_id TEXT,
+            name TEXT NOT NULL,
+            email TEXT NOT NULL,
+            role TEXT NOT NULL DEFAULT 'client',
+            permissions TEXT NOT NULL DEFAULT '{}',
+            status TEXT NOT NULL DEFAULT 'pending' CHECK(status IN ('pending', 'active', 'revoked')),
+            invite_token TEXT,
+            invited_by TEXT,
+            message TEXT DEFAULT '',
+            created_at TEXT DEFAULT CURRENT_TIMESTAMP,
+            accepted_at TEXT,
+            FOREIGN KEY (case_id) REFERENCES cases(id),
+            FOREIGN KEY (tenant_id) REFERENCES tenants(id)
+        );
+        CREATE INDEX IF NOT EXISTS idx_case_collaborators_case ON case_collaborators(case_id);
+        CREATE INDEX IF NOT EXISTS idx_case_collaborators_token ON case_collaborators(invite_token);
+        CREATE INDEX IF NOT EXISTS idx_case_collaborators_user ON case_collaborators(user_id);
     """)
 
 

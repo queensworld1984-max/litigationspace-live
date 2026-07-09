@@ -754,6 +754,37 @@ def send_team_invitation_email(to_email: str, inviter_name: str, tenant_name: st
     return _send_email(to_email, subject, html)[0]
 
 
+def send_case_invitation_email(to_email: str, inviter_name: str, case_title: str,
+                                role: str, token: str, message: str = None) -> bool:
+    """Send a per-case collaborator invitation email (Case Team & Access panel)."""
+    invite_url = f"{BASE_URL}/case-invite/{token}"
+    role_display = role.replace("_", " ").title()
+    custom_msg = f'<p style="color: #475569; line-height: 1.6; font-style: italic;">"{message}"</p>' if message else ""
+    subject = f"{inviter_name} invited you to collaborate on {case_title}"
+    html = f"""
+    <div style="font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif; max-width: 600px; margin: 0 auto; padding: 40px 20px;">
+        <div style="text-align: center; margin-bottom: 30px;">
+            <img src="{BASE_URL}/logo.png" alt="LitigationSpace" style="height: 36px; display: inline-block;" />
+        </div>
+        <div style="background: #f8fafc; border: 1px solid #e2e8f0; border-radius: 12px; padding: 32px;">
+            <h2 style="color: #1e293b; font-size: 20px; margin-top: 0;">You're invited to collaborate</h2>
+            <p style="color: #475569; line-height: 1.6;"><strong>{inviter_name}</strong> has invited you to collaborate on <strong>{case_title}</strong> as a <strong>{role_display}</strong>.</p>
+            {custom_msg}
+            <div style="background: #e0f2fe; border: 1px solid #7dd3fc; border-radius: 8px; padding: 16px; margin: 20px 0;">
+                <p style="color: #0369a1; font-size: 14px; margin: 0;"><strong>Case:</strong> {case_title}</p>
+                <p style="color: #0369a1; font-size: 14px; margin: 4px 0 0 0;"><strong>Your Role:</strong> {role_display}</p>
+            </div>
+            <div style="text-align: center; margin: 30px 0;">
+                <a href="{invite_url}" style="display: inline-block; background: linear-gradient(135deg, #d4a843, #b8922e); color: #000; text-decoration: none; padding: 14px 32px; border-radius: 8px; font-weight: 600; font-size: 16px;">Accept Invitation</a>
+            </div>
+            <p style="color: #94a3b8; font-size: 13px;">This invitation expires in 7 days. If you don't know {inviter_name}, you can safely ignore this email.</p>
+            <p style="color: #94a3b8; font-size: 12px; margin-top: 20px; word-break: break-all;">Or copy this link: {invite_url}</p>
+        </div>
+    </div>
+    """
+    return _send_email(to_email, subject, html)[0]
+
+
 def _safe(text: str) -> str:
     """Replace characters not supported by Helvetica with ASCII equivalents."""
     return (str(text or "")

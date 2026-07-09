@@ -3,9 +3,10 @@ import json
 import io
 import logging
 import os
+import secrets
 import shutil
 import traceback
-from datetime import datetime, timezone
+from datetime import datetime, timedelta, timezone
 from pathlib import Path
 from typing import List, Optional
 from pydantic import BaseModel
@@ -15,7 +16,7 @@ from fastapi.security import HTTPBearer, HTTPAuthorizationCredentials
 
 from app.database import get_db
 from app.models.schemas import CaseCreate, CaseUpdate, TaskCreate, TaskUpdate, DocumentCreate
-from app.utils.auth import get_current_user, generate_id, decode_token
+from app.utils.auth import get_current_user, generate_id, decode_token, create_access_token, hash_password
 
 _bearer = HTTPBearer(auto_error=False)
 
@@ -31,6 +32,8 @@ def get_download_user(
     raise HTTPException(status_code=401, detail="Not authenticated")
 from app.utils.model_router import get_model_for_task
 from app.utils.credits import credit_gate, deduct_credits
+from app.utils.case_auth import resolve_case_access
+from app.utils.email import send_case_invitation_email
 
 logger = logging.getLogger(__name__)
 
@@ -1255,7 +1258,14 @@ async def get_case(case_id: str, current_user: dict = Depends(get_current_user))
                 (case_id, current_user["sub"])
             ).fetchone()
             if not access:
-                raise HTTPException(status_code=404, detail="Case not found")
+                # Check for a per-case collaborator grant (Case Team & Access invites)
+                collab = db.execute(
+                    """SELECT id FROM case_collaborators
+                       WHERE case_id = ? AND user_id = ? AND status = 'active'""",
+                    (case_id, current_user["sub"])
+                ).fetchone()
+                if not collab:
+                    raise HTTPException(status_code=404, detail="Case not found")
             case = db.execute("SELECT * FROM cases WHERE id = ?", (case_id,)).fetchone()
 
         case_dict = dict(case)
@@ -1423,6 +1433,7 @@ async def delete_case(case_id: str, current_user: dict = Depends(get_current_use
 async def get_tasks(case_id: str, current_user: dict = Depends(get_current_user)):
     """Get all tasks for a case."""
     with get_db() as db:
+        resolve_case_access(case_id, current_user, db, required_permission="view_tasks")
         tasks = db.execute(
             "SELECT * FROM tasks WHERE case_id = ? ORDER BY created_at ASC",
             (case_id,)
@@ -1437,17 +1448,11 @@ async def create_task(
     current_user: dict = Depends(get_current_user)
 ):
     """Create a task for a case."""
-    tenant_id = current_user["tenant_id"]
     task_id = generate_id()
 
     with get_db() as db:
-        # Verify case exists
-        case = db.execute(
-            "SELECT id FROM cases WHERE id = ? AND tenant_id = ?",
-            (case_id, tenant_id)
-        ).fetchone()
-        if not case:
-            raise HTTPException(status_code=404, detail="Case not found")
+        case = resolve_case_access(case_id, current_user, db, required_permission="edit_tasks")
+        tenant_id = case["tenant_id"]
 
         description = _opt_str(req.description)
         assigned_to = _opt_str(req.assigned_to)
@@ -1524,6 +1529,7 @@ async def update_task(
 async def get_documents(case_id: str, current_user: dict = Depends(get_current_user)):
     """List documents for a case."""
     with get_db() as db:
+        resolve_case_access(case_id, current_user, db, required_permission="view_documents")
         docs = db.execute(
             "SELECT * FROM documents WHERE case_id = ? ORDER BY created_at DESC",
             (case_id,)
@@ -1570,7 +1576,9 @@ async def upload_document_file(
     current_user: dict = Depends(get_current_user)
 ):
     """Upload an actual file to a case. Auto-assigns exhibit label and AI-generated name."""
-    tenant_id = current_user["tenant_id"]
+    with get_db() as _access_db:
+        _case = resolve_case_access(case_id, current_user, _access_db, required_permission="upload_documents")
+        tenant_id = _case["tenant_id"]
 
     # Validate file extension
     filename = file.filename or "unnamed_file"
@@ -1600,16 +1608,6 @@ async def upload_document_file(
     relative_path = f"{tenant_id}/{case_id}/{safe_filename}"
 
     with get_db() as db:
-        # Verify case exists
-        case = db.execute(
-            "SELECT id FROM cases WHERE id = ? AND tenant_id = ?",
-            (case_id, tenant_id)
-        ).fetchone()
-        if not case:
-            # Clean up file
-            file_path.unlink(missing_ok=True)
-            raise HTTPException(status_code=404, detail="Case not found")
-
         db.execute(
             """INSERT INTO documents (id, case_id, tenant_id, filename, file_path, file_size, mime_type,
                category, uploaded_by, content_text)
@@ -1745,14 +1743,9 @@ async def download_all_documents_as_pdf(
     import fitz
     from fastapi.responses import Response
 
-    tenant_id = current_user["tenant_id"]
     with get_db() as db:
-        case = db.execute(
-            "SELECT * FROM cases WHERE id = ? AND tenant_id = ?",
-            (case_id, tenant_id)
-        ).fetchone()
-        if not case:
-            raise HTTPException(status_code=404, detail="Case not found")
+        case = resolve_case_access(case_id, current_user, db, required_permission="download_documents")
+        tenant_id = case["tenant_id"]
 
         docs = db.execute(
             "SELECT * FROM documents WHERE case_id = ? AND tenant_id = ? ORDER BY exhibit_order ASC, created_at ASC",
@@ -1801,7 +1794,7 @@ async def download_all_documents_as_pdf(
     merged_bytes = merged_pdf.tobytes()
     merged_pdf.close()
 
-    case_title = dict(case).get("title", "Case").replace(" ", "_")
+    case_title = case.get("title", "Case").replace(" ", "_")
     filename = f"{case_title}_Complete_Filing.pdf"
 
     return Response(
@@ -1820,14 +1813,9 @@ async def download_all_documents_as_zip(
     import zipfile
     from fastapi.responses import Response
 
-    tenant_id = current_user["tenant_id"]
     with get_db() as db:
-        case = db.execute(
-            "SELECT * FROM cases WHERE id = ? AND tenant_id = ?",
-            (case_id, tenant_id)
-        ).fetchone()
-        if not case:
-            raise HTTPException(status_code=404, detail="Case not found")
+        case = resolve_case_access(case_id, current_user, db, required_permission="download_documents")
+        tenant_id = case["tenant_id"]
 
         docs = db.execute(
             "SELECT * FROM documents WHERE case_id = ? AND tenant_id = ? ORDER BY exhibit_order ASC, created_at ASC",
@@ -2504,3 +2492,309 @@ async def get_uscis_status(case_id: str, current_user: dict = Depends(get_curren
         if not case:
             raise HTTPException(status_code=404, detail="Case not found")
         return dict(case)
+
+
+# ──────────────────────────────────────────
+# Case Team & Access — per-case collaborator invites
+# ──────────────────────────────────────────
+
+CASE_ROLE_PERMS: dict = {
+    "client":     {"view_documents": True,  "download_documents": True,  "upload_documents": False, "view_tasks": True,  "edit_tasks": False, "view_witnesses": True,  "view_discovery": True},
+    "co_counsel": {"view_documents": True,  "download_documents": True,  "upload_documents": True,  "view_tasks": True,  "edit_tasks": True,  "view_witnesses": True,  "view_discovery": True},
+    "paralegal":  {"view_documents": True,  "download_documents": True,  "upload_documents": True,  "view_tasks": True,  "edit_tasks": True,  "view_witnesses": True,  "view_discovery": True},
+    "expert":     {"view_documents": True,  "download_documents": True,  "upload_documents": False, "view_tasks": False, "edit_tasks": False, "view_witnesses": True,  "view_discovery": False},
+    "witness":    {"view_documents": True,  "download_documents": False, "upload_documents": False, "view_tasks": False, "edit_tasks": False, "view_witnesses": False, "view_discovery": False},
+    "observer":   {"view_documents": True,  "download_documents": False, "upload_documents": False, "view_tasks": True,  "edit_tasks": False, "view_witnesses": True,  "view_discovery": True},
+}
+
+CASE_MANAGER_ROLES = ("admin", "attorney", "expert", "paralegal")
+
+
+class CaseMemberInvite(BaseModel):
+    email: str
+    name: str
+    role: str = "client"
+    message: Optional[str] = None
+
+
+class CaseMemberUpdate(BaseModel):
+    role: str
+    permissions: dict
+
+
+def _collab_out(row) -> dict:
+    d = dict(row)
+    try:
+        d["permissions"] = json.loads(d.get("permissions") or "{}")
+    except (TypeError, ValueError):
+        d["permissions"] = {}
+    return d
+
+
+@router.get("/{case_id}/members")
+async def list_case_members(case_id: str, current_user: dict = Depends(get_current_user)):
+    """List collaborators invited to this case. Firm members only."""
+    tenant_id = current_user["tenant_id"]
+    with get_db() as db:
+        case = db.execute("SELECT id FROM cases WHERE id = ? AND tenant_id = ?", (case_id, tenant_id)).fetchone()
+        if not case:
+            raise HTTPException(status_code=404, detail="Case not found")
+        rows = db.execute(
+            "SELECT * FROM case_collaborators WHERE case_id = ? ORDER BY created_at DESC",
+            (case_id,)
+        ).fetchall()
+        return [_collab_out(r) for r in rows]
+
+
+@router.post("/{case_id}/members")
+async def invite_case_member(case_id: str, req: CaseMemberInvite, current_user: dict = Depends(get_current_user)):
+    """Invite a collaborator (client, co-counsel, paralegal, expert, witness, observer) to this case."""
+    tenant_id = current_user["tenant_id"]
+    if current_user["role"] not in CASE_MANAGER_ROLES:
+        raise HTTPException(status_code=403, detail="You don't have permission to invite collaborators")
+
+    email = req.email.strip().lower()
+    name = req.name.strip()
+    if not email or "@" not in email:
+        raise HTTPException(status_code=400, detail="Invalid email address")
+    if not name:
+        raise HTTPException(status_code=400, detail="Name is required")
+    if req.role not in CASE_ROLE_PERMS:
+        raise HTTPException(status_code=400, detail=f"Invalid role. Must be one of: {', '.join(CASE_ROLE_PERMS)}")
+
+    with get_db() as db:
+        case = db.execute("SELECT id, title FROM cases WHERE id = ? AND tenant_id = ?", (case_id, tenant_id)).fetchone()
+        if not case:
+            raise HTTPException(status_code=404, detail="Case not found")
+
+        existing = db.execute(
+            "SELECT id FROM case_collaborators WHERE case_id = ? AND LOWER(email) = ? AND status != 'revoked'",
+            (case_id, email)
+        ).fetchone()
+        if existing:
+            raise HTTPException(status_code=400, detail="This person already has access or a pending invite to this case")
+
+        inviter = db.execute("SELECT full_name FROM users WHERE id = ?", (current_user["sub"],)).fetchone()
+        inviter_name = inviter["full_name"] if inviter else current_user.get("email", "")
+
+        member_id = generate_id()
+        token = secrets.token_urlsafe(48)
+        permissions = CASE_ROLE_PERMS[req.role]
+        now = datetime.now(timezone.utc).isoformat()
+
+        db.execute(
+            """INSERT INTO case_collaborators
+               (id, case_id, tenant_id, name, email, role, permissions, status, invite_token, invited_by, message, created_at)
+               VALUES (?, ?, ?, ?, ?, ?, ?, 'pending', ?, ?, ?, ?)""",
+            (member_id, case_id, tenant_id, name, email, req.role, json.dumps(permissions),
+             token, current_user["sub"], (req.message or "").strip(), now)
+        )
+
+        send_case_invitation_email(
+            to_email=email,
+            inviter_name=inviter_name,
+            case_title=case["title"],
+            role=req.role,
+            token=token,
+            message=(req.message or "").strip() or None,
+        )
+
+        row = db.execute("SELECT * FROM case_collaborators WHERE id = ?", (member_id,)).fetchone()
+        return _collab_out(row)
+
+
+@router.patch("/{case_id}/members/{member_id}")
+async def update_case_member(case_id: str, member_id: str, req: CaseMemberUpdate,
+                              current_user: dict = Depends(get_current_user)):
+    """Update a collaborator's role and granular permissions."""
+    tenant_id = current_user["tenant_id"]
+    if current_user["role"] not in CASE_MANAGER_ROLES:
+        raise HTTPException(status_code=403, detail="You don't have permission to manage collaborators")
+    if req.role not in CASE_ROLE_PERMS:
+        raise HTTPException(status_code=400, detail=f"Invalid role. Must be one of: {', '.join(CASE_ROLE_PERMS)}")
+
+    with get_db() as db:
+        member = db.execute(
+            """SELECT cc.* FROM case_collaborators cc
+               JOIN cases c ON cc.case_id = c.id
+               WHERE cc.id = ? AND cc.case_id = ? AND c.tenant_id = ?""",
+            (member_id, case_id, tenant_id)
+        ).fetchone()
+        if not member:
+            raise HTTPException(status_code=404, detail="Collaborator not found")
+
+        db.execute(
+            "UPDATE case_collaborators SET role = ?, permissions = ? WHERE id = ?",
+            (req.role, json.dumps(req.permissions), member_id)
+        )
+        row = db.execute("SELECT * FROM case_collaborators WHERE id = ?", (member_id,)).fetchone()
+        return _collab_out(row)
+
+
+@router.delete("/{case_id}/members/{member_id}")
+async def remove_case_member(case_id: str, member_id: str, current_user: dict = Depends(get_current_user)):
+    """Revoke a collaborator's access to this case."""
+    tenant_id = current_user["tenant_id"]
+    if current_user["role"] not in CASE_MANAGER_ROLES:
+        raise HTTPException(status_code=403, detail="You don't have permission to remove collaborators")
+
+    with get_db() as db:
+        member = db.execute(
+            """SELECT cc.id FROM case_collaborators cc
+               JOIN cases c ON cc.case_id = c.id
+               WHERE cc.id = ? AND cc.case_id = ? AND c.tenant_id = ?""",
+            (member_id, case_id, tenant_id)
+        ).fetchone()
+        if not member:
+            raise HTTPException(status_code=404, detail="Collaborator not found")
+        db.execute("DELETE FROM case_collaborators WHERE id = ?", (member_id,))
+        return {"message": "Access removed"}
+
+
+@router.post("/{case_id}/members/{member_id}/resend")
+async def resend_case_member_invite(case_id: str, member_id: str, current_user: dict = Depends(get_current_user)):
+    """Resend a pending case collaborator invite with a fresh token."""
+    tenant_id = current_user["tenant_id"]
+    if current_user["role"] not in CASE_MANAGER_ROLES:
+        raise HTTPException(status_code=403, detail="You don't have permission to resend invites")
+
+    with get_db() as db:
+        member = db.execute(
+            """SELECT cc.*, c.title as case_title FROM case_collaborators cc
+               JOIN cases c ON cc.case_id = c.id
+               WHERE cc.id = ? AND cc.case_id = ? AND c.tenant_id = ?""",
+            (member_id, case_id, tenant_id)
+        ).fetchone()
+        if not member:
+            raise HTTPException(status_code=404, detail="Collaborator not found")
+
+        new_token = secrets.token_urlsafe(48)
+        db.execute(
+            "UPDATE case_collaborators SET invite_token = ?, status = 'pending' WHERE id = ?",
+            (new_token, member_id)
+        )
+
+        inviter = db.execute("SELECT full_name FROM users WHERE id = ?", (current_user["sub"],)).fetchone()
+        inviter_name = inviter["full_name"] if inviter else current_user.get("email", "")
+
+        send_case_invitation_email(
+            to_email=member["email"],
+            inviter_name=inviter_name,
+            case_title=member["case_title"],
+            role=member["role"],
+            token=new_token,
+            message=member["message"] or None,
+        )
+        return {"message": f"Invite resent to {member['email']}"}
+
+
+# ──────────────────────────────────────────
+# Case invite acceptance — public, no auth required
+# ──────────────────────────────────────────
+
+class CaseInviteAccept(BaseModel):
+    token: str
+    full_name: str
+    password: str
+
+
+@router.get("/invite/{token}")
+async def get_case_invite_info(token: str):
+    """Get case invitation details for the accept-invite page. Public — no auth."""
+    with get_db() as db:
+        inv = db.execute(
+            """SELECT cc.*, c.title as case_title, u.full_name as inviter_name
+               FROM case_collaborators cc
+               JOIN cases c ON cc.case_id = c.id
+               LEFT JOIN users u ON cc.invited_by = u.id
+               WHERE cc.invite_token = ?""",
+            (token,)
+        ).fetchone()
+        if not inv:
+            raise HTTPException(status_code=404, detail="Invite not found or expired")
+        d = _collab_out(inv)
+        return {
+            "name": d["name"],
+            "email": d["email"],
+            "role": d["role"],
+            "permissions": d["permissions"],
+            "status": d["status"],
+            "message": d.get("message"),
+            "case_id": d["case_id"],
+            "case_title": d["case_title"],
+            "inviter_name": d.get("inviter_name") or "",
+        }
+
+
+@router.post("/invite/{token}/accept")
+async def accept_case_invite(token: str, req: CaseInviteAccept):
+    """Accept a case invitation and create (or link) a login-capable account.
+
+    The accepted collaborator gets their OWN tenant (not the inviting firm's),
+    so normal tenant-scoped endpoints show them nothing extra — access to this
+    one case is granted separately via the case_collaborators row + the shared
+    resolve_case_access() helper, keeping them fully isolated from the firm's
+    other cases.
+    """
+    if len(req.password) < 8:
+        raise HTTPException(status_code=400, detail="Password must be at least 8 characters")
+    if not req.full_name.strip():
+        raise HTTPException(status_code=400, detail="Full name is required")
+
+    with get_db() as db:
+        inv = db.execute(
+            """SELECT cc.*, c.title as case_title FROM case_collaborators cc
+               JOIN cases c ON cc.case_id = c.id
+               WHERE cc.invite_token = ?""",
+            (token,)
+        ).fetchone()
+        if not inv:
+            raise HTTPException(status_code=400, detail="Invalid or expired invitation link")
+
+        if inv["status"] == "revoked":
+            raise HTTPException(status_code=400, detail="This invitation has been revoked")
+
+        existing_user = db.execute(
+            "SELECT id FROM users WHERE LOWER(email) = ?", (inv["email"].lower(),)
+        ).fetchone()
+        if existing_user:
+            raise HTTPException(
+                status_code=400,
+                detail="An account with this email already exists. Please sign in, then reopen this invite link."
+            )
+
+        # A fresh, standalone tenant for this collaborator — deliberately NOT the
+        # inviting firm's tenant_id, so tenant-scoped queries never surface the
+        # firm's other cases to them.
+        tenant_id = generate_id()
+        user_id = generate_id()
+        now = datetime.now(timezone.utc).isoformat()
+
+        db.execute(
+            "INSERT INTO tenants (id, name, type, created_at) VALUES (?, ?, 'solo_practitioner', ?)",
+            (tenant_id, f"{req.full_name.strip()} (collaborator)", now)
+        )
+        db.execute(
+            """INSERT INTO users (id, tenant_id, email, password_hash, full_name, role, status, created_at)
+               VALUES (?, ?, ?, ?, ?, 'client', 'READY', ?)""",
+            (user_id, tenant_id, inv["email"].lower(), hash_password(req.password), req.full_name.strip(), now)
+        )
+        db.execute(
+            "UPDATE case_collaborators SET status = 'active', user_id = ?, accepted_at = ? WHERE id = ?",
+            (user_id, now, inv["id"])
+        )
+
+        token_out = create_access_token(user_id, tenant_id, "client", inv["email"].lower())
+
+    return {
+        "message": f"You now have access to {inv['case_title']}",
+        "access_token": token_out,
+        "case_id": inv["case_id"],
+        "user": {
+            "id": user_id,
+            "tenant_id": tenant_id,
+            "email": inv["email"].lower(),
+            "full_name": req.full_name.strip(),
+            "role": "client",
+        }
+    }
