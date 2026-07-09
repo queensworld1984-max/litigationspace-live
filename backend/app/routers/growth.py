@@ -440,7 +440,9 @@ async def publish_social_post(post_id: str, current_user: dict = Depends(get_cur
 @router.get("/blog/articles")
 async def list_blog_articles(category: Optional[str] = None, site: Optional[str] = None):
     with get_db() as db:
-        query = "SELECT * FROM blog_articles WHERE 1=1"
+        # Exclude empty-content stubs (seeded but not yet AI-backfilled) so they never
+        # render as broken blank articles to real visitors before the cron fills them in.
+        query = "SELECT * FROM blog_articles WHERE content IS NOT NULL AND content != ''"
         params: list = []
         if category:
             query += " AND category = ?"
@@ -457,7 +459,7 @@ async def list_blog_articles(category: Optional[str] = None, site: Optional[str]
 async def get_blog_article(slug: str):
     with get_db() as db:
         article = db.execute("SELECT * FROM blog_articles WHERE slug = ?", (slug,)).fetchone()
-        if not article:
+        if not article or not article["content"]:
             raise HTTPException(status_code=404, detail="Article not found")
         db.execute("UPDATE blog_articles SET view_count = view_count + 1 WHERE slug = ?", (slug,))
     return dict(article)
@@ -1855,6 +1857,21 @@ async def run_ai_blog_generation(site: str = "ls"):
 
     import random
 
+    # ── Backfill an existing empty-content stub before generating a brand-new article ──
+    # Blog articles can be seeded (see main.py startup seed, and admin/import tooling) with
+    # title/slug/metadata but no content. Left unchecked, this cron would just keep publishing
+    # new randomly-topicked articles forever while those stubs sit empty and get linked/rendered
+    # as broken blank pages. Always drain the backlog of empty stubs first.
+    stub = None
+    with get_db() as db:
+        stub = db.execute(
+            "SELECT id, title, slug, category, target_keywords FROM blog_articles "
+            "WHERE (content IS NULL OR content = '') AND website_id = ? "
+            "ORDER BY created_at ASC LIMIT 1",
+            (site,)
+        ).fetchone()
+    backfill_mode = stub is not None
+
     if site == "bc":
         # ── Build Champions: 501(c)(3) nonprofit — access to justice content ──
         topics = [
@@ -1871,7 +1888,10 @@ async def run_ai_blog_generation(site: str = "ls"):
             ("Supporting Public Defenders Through Technology Innovation", "general", "public defender technology, criminal defense innovation, legal aid tech"),
             ("Equal Justice Under Law: The Promise and the Gap", "general", "equal justice, judicial equity, access to legal system"),
         ]
-        topic, category, keywords = random.choice(topics)
+        if backfill_mode:
+            topic, category, keywords = stub["title"], stub["category"] or "general", stub["target_keywords"] or ""
+        else:
+            topic, category, keywords = random.choice(topics)
         system_msg = (
             "You are a nonprofit content writer for Build Champions (buildchampions.org), a 501(c)(3) "
             "nonprofit whose mission is to democratize access to legal justice. "
@@ -1934,7 +1954,10 @@ async def run_ai_blog_generation(site: str = "ls"):
             ("Litigation Hold Letters: Preserving Evidence Early", "general", "litigation hold, evidence preservation, spoliation sanctions"),
             ("Indiana Trial Rule 56: Summary Judgment in Indiana", "jurisdictional_guide", "Indiana summary judgment, Trial Rule 56, IN motion practice"),
         ]
-        topic, category, keywords = random.choice(topics)
+        if backfill_mode:
+            topic, category, keywords = stub["title"], stub["category"] or "general", stub["target_keywords"] or ""
+        else:
+            topic, category, keywords = random.choice(topics)
         system_msg = (
             "You are a legal content expert writing for LitigationSpace.com. Write authoritative, well-researched legal content. "
             "Return ONLY the article body HTML using h2, h3, p, ul, ol, li, strong, a tags. "
@@ -1984,6 +2007,15 @@ async def run_ai_blog_generation(site: str = "ls"):
         content = _re.sub(r'<meta[^>]*/?>', '', content, flags=_re.IGNORECASE)
         content = _re.sub(r'<style[^>]*>.*?</style>', '', content, flags=_re.DOTALL | _re.IGNORECASE)
         content = content.strip()
+
+        if backfill_mode:
+            with get_db() as db:
+                db.execute(
+                    "UPDATE blog_articles SET content = ?, status = 'published' WHERE id = ?",
+                    (content, stub["id"])
+                )
+            return {"status": "backfilled", "title": topic, "slug": stub["slug"], "website_id": site}
+
         slug = topic.lower().replace(" ", "-").replace(":", "").replace(",", "")[:80]
 
         with get_db() as db:
