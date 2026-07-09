@@ -941,6 +941,9 @@ def init_db():
         # Migrate documents table to add formatted HTML for review
         _migrate_documents_content_html(db)
 
+        # Migrate blog_articles table to add status column (used by Growth OS cron/admin)
+        _migrate_blog_articles_status(db)
+
         # Migrate cases table to add jurisdiction/forum/matter_type/party_roles
         _migrate_cases_jurisdiction_fields(db)
 
@@ -2180,6 +2183,24 @@ def _migrate_documents_content_html(db):
             print("[MIGRATION] Added content_html column to documents table")
     except Exception as e:
         print(f"[MIGRATION WARNING] documents content_html: {e}")
+
+
+def _migrate_blog_articles_status(db):
+    """Add status column to blog_articles table if it doesn't exist.
+
+    The Growth OS blog cron/admin endpoints (growth.py) write and expect a
+    `status` column, but it was never part of the original CREATE TABLE and
+    only existed on some deployments via manual DB patching. Fresh databases
+    (e.g. a new tenant clone) were missing it, silently breaking every blog
+    publish (cron and admin) with "no such column: status".
+    """
+    try:
+        cols = {c["name"] for c in db.execute("PRAGMA table_info(blog_articles)").fetchall()}
+        if "status" not in cols:
+            db.execute("ALTER TABLE blog_articles ADD COLUMN status TEXT DEFAULT 'published'")
+            print("[MIGRATION] Added status column to blog_articles table")
+    except Exception as e:
+        print(f"[MIGRATION WARNING] blog_articles status: {e}")
 
 
 def _migrate_cases_jurisdiction_fields(db):
