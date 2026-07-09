@@ -1,0 +1,36 @@
+User-agent: *
+Allow: /
+
+# Public pages
+Allow: /motion-analyzer
+Allow: /legal-brain
+Allow: /legal-database
+Allow: /live-bench
+Allow: /marketplace
+Allow: /win-simulator
+Allow: /pricing
+Allow: /blog
+Allow: /directory
+Allow: /contact
+Allow: /terms
+Allow: /privacy
+Allow: /brand
+Allow: /join-live-bench
+Allow: /about-build-champions
+Allow: /document-analyzer
+
+# Block admin, dashboard, authenticated routes
+Disallow: /dashboard
+Disallow: /admin
+Disallow: /cases
+Disallow: /warroom
+Disallow: /drafting
+Disallow: /case-builder
+Disallow: /bench/inbox
+Disallow: /jurisdiction
+Disallow: /review/
+Disallow: /sign/
+Disallow: /invoice/
+Disallow: /case-invite/
+
+Sitemap: https://litigationspace.com/sitemap.xml

@@ -1,0 +1,13 @@
+{
+  "name": "LitigationSpace",
+  "short_name": "LitigationSpace",
+  "description": "The Operating System for Litigation — AI-powered tools for litigation attorneys",
+  "start_url": "/",
+  "display": "standalone",
+  "background_color": "#0d1117",
+  "theme_color": "#F5A623",
+  "icons": [
+    { "src": "/favicon.png", "sizes": "any", "type": "image/png" }
+  ],
+  "categories": ["legal", "productivity", "utilities"]
+}

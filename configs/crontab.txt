@@ -1,0 +1,32 @@
+# ===== LitigationSpace Marketing Automation =====
+# Lead discovery: DAILY at 02:00 UTC
+0 2 * * * /var/www/litigationspace/cron_marketing.sh lead_discovery
+# Email Enrichment: every 4 hours (00, 04, 08, 12, 16, 20)
+0 0,4,8,12,16,20 * * * /var/www/litigationspace/cron_marketing.sh email_enrichment
+# Email queue processing: every hour
+0 * * * * /var/www/litigationspace/cron_marketing.sh email_queue_process
+# Blog generation: daily at 09:00 UTC
+0 9 * * * /var/www/litigationspace/cron_marketing.sh blog_publish
+# Social posts: 5x daily (08, 11, 14, 17, 20 UTC)
+0 8 * * * /var/www/litigationspace/cron_marketing.sh social_publish
+0 11 * * * /var/www/litigationspace/cron_marketing.sh social_publish
+0 12 * * * /var/www/litigationspace/cron_marketing.sh social_publish
+0 14 * * * /var/www/litigationspace/cron_marketing.sh social_publish
+0 17 * * * /var/www/litigationspace/cron_marketing.sh social_publish
+0 20 * * * /var/www/litigationspace/cron_marketing.sh social_publish
+# Facebook Auto-Publish: 15 min after social generation
+15 8 * * * /var/www/litigationspace/cron_marketing.sh facebook_publish
+15 11 * * * /var/www/litigationspace/cron_marketing.sh facebook_publish
+15 14 * * * /var/www/litigationspace/cron_marketing.sh facebook_publish
+15 17 * * * /var/www/litigationspace/cron_marketing.sh facebook_publish
+15 20 * * * /var/www/litigationspace/cron_marketing.sh facebook_publish
+# Live Bench profiles: daily at 06:00 UTC
+0 6 * * * /var/www/litigationspace/cron_marketing.sh live_bench_profiles
+# Expert discovery: every 3 days at 03:00 UTC
+0 3 */3 * * /var/www/litigationspace/cron_marketing.sh expert_recruitment
+# Legal database auto-discover: daily at 03:00 UTC
+0 3 * * * /usr/bin/python3 /var/www/litigationspace/backend/legal_database_auto_discover.py >> /var/www/litigationspace/data/legal_db_cron.log 2>&1
+# Competitor analysis: weekly Monday at 05:00 UTC
+0 5 * * 1 /var/www/litigationspace/cron_marketing.sh competitor_analysis
+# SEO keyword check: weekly Wednesday at 05:00 UTC
+0 5 * * 3 /var/www/litigationspace/cron_marketing.sh keyword_ranking

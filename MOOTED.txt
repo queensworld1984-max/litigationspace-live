@@ -1,0 +1,6 @@
+﻿MOOTED — DO NOT USE
+===================
+This folder is archived on GitHub and must not be deployed.
+Live production: /var/www/litigationspace-staging on VPS 72.62.165.54
+Archive repo: https://github.com/queensworld1984-max/litigationspace-archive
+Mooted: 2026-07-06

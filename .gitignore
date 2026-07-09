@@ -1,0 +1,44 @@
+# Python
+__pycache__/
+*.pyc
+*.pyo
+.venv/
+
+# Secrets
+.env
+.env.*
+!.env.example
+
+# Database
+*.db
+*.sqlite
+
+# Logs
+*.log
+logs/
+
+# Runtime / uploads
+data/
+uploads/
+var/
+
+# Frontend build
+src-app/dist/
+src-app/node_modules/
+node_modules/
+
+# Claude Code project files
+.claude/
+
+# Backup / patch files
+*.bak
+*.bak-*
+patch_*.py
+
+# OS
+.DS_Store
+Thumbs.db
+
+# Local runtime
+.local-preview.pid
+ls-live-sync.tar

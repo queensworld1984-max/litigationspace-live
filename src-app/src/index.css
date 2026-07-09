@@ -1,0 +1,109 @@
+@import url('https://fonts.googleapis.com/css2?family=Poppins:wght@300;400;500;600;700;800;900&display=swap');
+
+@tailwind base;
+@tailwind components;
+@tailwind utilities;
+
+@layer base {
+  :root {
+    --gold: #F5A623;
+    --gold-light: #ffd700;
+    --gold-dark: #b8760a;
+    --ls-dark: #050505;
+    /* Theme tokens — overridden at runtime by ThemeContext */
+    --ls-bg:      #0d1117;
+    --ls-sidebar: #111827;
+    --ls-card:    #1e2a45;
+    --ls-card2:   #1e293b;
+    --ls-border:  rgba(255,255,255,0.08);
+    --ls-border2: #334155;
+    --ls-t1:      #ffffff;
+    --ls-t2:      rgba(255,255,255,0.60);
+    --ls-t3:      #94a3b8;
+    --ls-accent:  #F5A623;
+    --ls-inp-bg:  #1e293b;
+    --ls-inp-bd:  #334155;
+    /* Sidebar offset — collapses to 0 on mobile automatically */
+    --sidebar-offset: 240px;
+  }
+
+  @media (max-width: 767px) {
+    :root {
+      --sidebar-offset: 0px;
+    }
+  }
+
+  body {
+    font-family: 'Inter', system-ui, sans-serif;
+    -webkit-font-smoothing: antialiased;
+    -moz-osx-font-smoothing: grayscale;
+  }
+
+  h1, h2, h3, h4, h5, h6 {
+    font-family: 'Playfair Display', Georgia, serif;
+  }
+}
+
+/* ── Sidebar mobile drawer ─────────────────────────────────────────────────── */
+@media (max-width: 767px) {
+  .sidebar-mobile-hidden {
+    transform: translateX(-100%);
+  }
+}
+@media (min-width: 768px) {
+  /* On desktop, .sidebar-mobile-hidden does NOT force transform — let JS control it */
+  .sidebar-mobile-hidden {
+    transform: unset;
+  }
+  /* Hide the mobile hamburger on desktop */
+  .md\:hidden {
+    display: none !important;
+  }
+}
+
+/* Hide desktop collapse button on mobile */
+@media (max-width: 767px) {
+  .sidebar-collapse-btn {
+    display: none !important;
+  }
+}
+
+/* ── Responsive grids ──────────────────────────────────────────────────────── */
+@media (max-width: 767px) {
+  /* Stats bars: 4-col → 2-col */
+  .stats-grid-4   { grid-template-columns: repeat(2, 1fr) !important; }
+  /* 3-col card grids → 1-col */
+  .grid-3-col     { grid-template-columns: 1fr !important; }
+  /* 2-col layouts → 1-col */
+  .grid-2-col     { grid-template-columns: 1fr !important; }
+  /* Feature comparison table — horizontal scroll */
+  .table-scroll   { overflow-x: auto !important; -webkit-overflow-scrolling: touch; }
+  /* Paddings */
+  .page-pad       { padding: 16px !important; }
+  /* Large heading scale-down */
+  .hero-h1        { font-size: 2rem !important; }
+}
+
+@layer utilities {
+  .gold-gradient-bg {
+    background: linear-gradient(135deg, #fff8c0, #ffd700, #F5A623, #b8760a, #F5A623, #ffd700);
+  }
+
+  .gold-gradient-text {
+    background: linear-gradient(135deg, #ffd700, #F5A623, #b8760a, #F5A623, #ffd700);
+    -webkit-background-clip: text;
+    -webkit-text-fill-color: transparent;
+    background-clip: text;
+  }
+
+  .glass-card {
+    background: rgba(255, 255, 255, 0.05);
+    border: 1px solid rgba(245, 166, 35, 0.30);
+    border-radius: 12px;
+    backdrop-filter: blur(10px);
+    -webkit-backdrop-filter: blur(10px);
+  }
+}
+
+@keyframes spin { to { transform: rotate(360deg); } }
+@keyframes ls-banner-in { from { opacity: 0; transform: translateY(-6px); } to { opacity: 1; transform: translateY(0); } }

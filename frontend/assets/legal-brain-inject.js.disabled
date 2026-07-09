@@ -1,0 +1,480 @@
+(function () {
+  'use strict';
+
+  var GOLD      = '#C89820';
+  var userName  = '';
+  var userEmail = '';
+  var injected  = false;
+
+  /* ── Helpers ─────────────────────────────────────────────────────────── */
+  function tok() {
+    try { return localStorage.getItem('token') || sessionStorage.getItem('token') || ''; }
+    catch (e) { return ''; }
+  }
+  function api(url, opts) {
+    return fetch(url, Object.assign({
+      headers: { 'Content-Type': 'application/json', 'Authorization': 'Bearer ' + tok() }
+    }, opts || {})).then(function (r) { return r.json(); });
+  }
+  function $id(id) { return document.getElementById(id); }
+  function onLB() {
+    var p = window.location.pathname;
+    return p.startsWith('/legal-brain') || p.startsWith('/dashboard/legal-brain');
+  }
+
+  function greetWord() {
+    var h = new Date().getHours();
+    if (h >= 5  && h < 12) return 'Good Morning';
+    if (h >= 12 && h < 17) return 'Good Afternoon';
+    if (h >= 17 && h < 21) return 'Good Evening';
+    return 'Good Night';
+  }
+
+  function loadUser() {
+    if (!tok()) return;
+    api('/api/auth/me').then(function (d) {
+      if (!d || !d.full_name) return;
+      userName  = d.full_name.split(' ')[0];
+      userEmail = d.email || '';
+      var el = $id('lb-name'); if (el) el.textContent = greetWord() + ', ' + userName;
+      var fr = $id('lb-ef-from'); if (fr) fr.value = userEmail;
+    }).catch(function () {});
+  }
+
+  /* ── CSS ─────────────────────────────────────────────────────────────── */
+  function injectStyles() {
+    if ($id('lb-style')) return;
+    var s = document.createElement('style');
+    s.id = 'lb-style';
+    s.textContent = [
+      /* Greeting */
+      '#lb-greeting{text-align:center;padding:80px 20px 28px;background:none!important;',
+        'border:none!important;box-shadow:none!important;pointer-events:none}',
+      '#lb-name{font-size:2.2rem;font-weight:300;color:#1a1a1a;display:block;',
+        'letter-spacing:-0.02em;font-family:-apple-system,BlinkMacSystemFont,"Segoe UI",sans-serif}',
+      '#lb-sub{font-size:1rem;color:#555555;display:block;margin-top:8px}',
+
+      /* Pills */
+      '#lb-pills{display:flex;flex-wrap:wrap;justify-content:center;gap:8px;',
+        'padding:10px 20px 14px;width:100%;box-sizing:border-box;background:none!important}',
+      '.lb-pill{font-size:13px;padding:7px 16px;border-radius:20px;',
+        'border:1px solid #e0e0e0;background:#ffffff;color:#333333;',
+        'cursor:pointer;font-family:inherit;transition:border-color .18s,color .18s}',
+      '.lb-pill:hover{border-color:' + GOLD + ';color:' + GOLD + '}',
+
+      /* AI response — transparent, clean text */
+      '.lb-ai-msg{background:transparent!important;border:none!important;',
+        'box-shadow:none!important;color:#1a1a1a!important;',
+        'max-width:680px;margin:0 auto;padding:16px 0}',
+      '.lb-ai-msg *{color:#1a1a1a!important}',
+
+      /* AI response inner text */
+      '.lb-ai-doc{background:transparent!important;color:#1a1a1a!important;',
+        'font-size:15px!important;line-height:1.75!important;',
+        'font-family:-apple-system,BlinkMacSystemFont,"Segoe UI",sans-serif!important;',
+        'border:none!important;padding:0!important}',
+      '.lb-ai-doc *{color:#1a1a1a!important}',
+
+      /* User message — gold bubble, right */
+      '.lb-user-msg{background:#C89820!important;color:#ffffff!important;',
+        'border-radius:18px!important;padding:10px 18px!important;',
+        'max-width:60%!important;margin-left:auto!important;display:block!important;',
+        'font-size:15px!important;line-height:1.6!important}',
+      '.lb-user-msg *{color:#ffffff!important}',
+
+      /* Email panel — dark navy */
+      '#lb-email{display:none;max-width:680px;width:100%;margin:0 auto 10px;',
+        'background:#111828;border:1px solid #2a3a5a;border-radius:14px;',
+        'padding:20px 24px;font-family:-apple-system,BlinkMacSystemFont,"Segoe UI",sans-serif;',
+        'position:relative}',
+      '#lb-email.open{display:block}',
+      '#lb-ec{position:absolute;top:12px;right:16px;background:none;border:none;',
+        'color:rgba(255,255,255,.45);font-size:18px;cursor:pointer;line-height:1;padding:0}',
+      '#lb-ec:hover{color:#fff}',
+      '.lbe-title{font-size:14px;font-weight:700;color:' + GOLD + ';margin:0 0 16px}',
+      '.lbe-row{margin-bottom:11px}',
+      '.lbe-lbl{display:block;font-size:10.5px;font-weight:700;letter-spacing:.06em;',
+        'text-transform:uppercase;color:' + GOLD + ';margin-bottom:4px}',
+      '.lbe-in,.lbe-ta{width:100%;box-sizing:border-box;background:#0d1228;',
+        'border:1px solid #2a3a5a;border-radius:8px;padding:9px 13px;color:#fff;',
+        'font-size:13px;font-family:inherit;outline:none;transition:border-color .18s}',
+      '.lbe-in:focus,.lbe-ta:focus{border-color:' + GOLD + '}',
+      '.lbe-in[readonly]{color:rgba(255,255,255,.45)}',
+      '.lbe-ta{resize:vertical;min-height:62px}',
+      '#lb-body-wrap{display:none;margin-bottom:12px}',
+      '#lb-body{width:100%;box-sizing:border-box;min-height:110px;max-height:260px;',
+        'overflow-y:auto;background:#0d1228;border:1px solid #2a3a5a;border-radius:8px;',
+        'padding:10px 13px;color:#f1f5f9;font-size:13px;font-family:inherit;',
+        'outline:none;line-height:1.65;transition:border-color .18s}',
+      '#lb-body:focus{border-color:' + GOLD + '}',
+      '.lbe-btns{display:flex;gap:8px;flex-wrap:wrap;margin-top:4px}',
+      '#lb-gen{padding:9px 18px;border-radius:8px;border:none;background:' + GOLD + ';',
+        'color:#000;font-size:13px;font-weight:700;cursor:pointer}',
+      '#lb-gen:disabled{opacity:.4;cursor:not-allowed}',
+      '#lb-send{display:none;padding:9px 18px;border-radius:8px;border:none;',
+        'background:#10b981;color:#fff;font-size:13px;font-weight:700;cursor:pointer}',
+      '#lb-send:disabled{opacity:.4;cursor:not-allowed}',
+      '#lb-save{display:none;padding:9px 18px;border-radius:8px;',
+        'border:1.5px solid ' + GOLD + ';background:transparent;color:' + GOLD + ';',
+        'font-size:13px;font-weight:700;cursor:pointer}',
+      '#lb-estat{font-size:12px;margin-top:8px;min-height:16px;color:rgba(255,255,255,.55)}',
+    ].join('');
+    document.head.appendChild(s);
+  }
+
+  /* ── Main content background (right column only) ─────────────────────── */
+  function applyMainBg(emptyState) {
+    var contentArea = emptyState.parentElement;
+    if (!contentArea) return;
+    var mainCol = contentArea.parentElement;
+    if (mainCol && !mainCol.dataset.lbBg) {
+      mainCol.dataset.lbBg = '1';
+      mainCol.style.setProperty('background', '#f7f7f5', 'important');
+    }
+  }
+
+  /* ── Greeting ────────────────────────────────────────────────────────── */
+  function injectGreeting(emptyState) {
+    if ($id('lb-greeting')) return;
+    for (var i = 0; i < emptyState.children.length; i++) {
+      emptyState.children[i].style.display = 'none';
+    }
+    var wrap = document.createElement('div');
+    wrap.id = 'lb-greeting';
+    var name = document.createElement('span');
+    name.id = 'lb-name';
+    name.textContent = greetWord() + ', ' + (userName || 'Counselor');
+    var sub = document.createElement('span');
+    sub.id = 'lb-sub';
+    sub.textContent = 'What legal question can I help you with today?';
+    wrap.appendChild(name);
+    wrap.appendChild(sub);
+    emptyState.insertBefore(wrap, emptyState.firstChild);
+  }
+
+  /* ── AI + user message styling ───────────────────────────────────────── */
+  var BLOCK = { H1:1,H2:1,H3:1,H4:1,H5:1,H6:1,P:1,OL:1,UL:1,BLOCKQUOTE:1,PRE:1,TABLE:1 };
+
+  function hasBlockChildren(el) {
+    var n = 0;
+    for (var i = 0; i < el.children.length; i++) {
+      if (BLOCK[el.children[i].tagName] && ++n >= 2) return true;
+    }
+    return false;
+  }
+
+  function applyAiStyles() {
+    if (!onLB()) return;
+    var divs = document.querySelectorAll('div:not(.lb-ai-checked)');
+    for (var i = 0; i < divs.length; i++) {
+      var el = divs[i];
+      el.classList.add('lb-ai-checked');
+
+      /* AI response inner doc — has ≥2 direct block children */
+      if (hasBlockChildren(el) && !el.classList.contains('lb-user-msg')) {
+        el.classList.add('lb-ai-doc');
+        /* Override inline styles set by React */
+        el.style.setProperty('background',   'transparent',                                          'important');
+        el.style.setProperty('color',        '#1a1a1a',                                              'important');
+        el.style.setProperty('font-size',    '15px',                                                 'important');
+        el.style.setProperty('line-height',  '1.75',                                                 'important');
+        el.style.setProperty('font-family',  '-apple-system,BlinkMacSystemFont,"Segoe UI",sans-serif','important');
+        el.style.setProperty('border',       'none',                                                 'important');
+        el.style.setProperty('padding',      '0',                                                    'important');
+        /* Force color on every descendant */
+        el.querySelectorAll('*').forEach(function (child) {
+          child.style.setProperty('color', '#1a1a1a', 'important');
+        });
+        /* Also fix the outer bubble wrapper (has React inline dark bg) */
+        var outer = el.parentElement;
+        if (outer && !outer.classList.contains('lb-user-msg') && !outer.dataset.lbAiOuter) {
+          outer.dataset.lbAiOuter = '1';
+          outer.classList.add('lb-ai-msg');
+          outer.style.setProperty('background',  'transparent', 'important');
+          outer.style.setProperty('border',      'none',        'important');
+          outer.style.setProperty('box-shadow',  'none',        'important');
+          outer.style.setProperty('color',       '#1a1a1a',     'important');
+          outer.style.setProperty('max-width',   '680px',       'important');
+          outer.style.setProperty('margin',      '0 auto',      'important');
+          outer.style.setProperty('padding',     '16px 0',      'important');
+        }
+      }
+
+      /* User message bubble — borderRadius 16px + direct <pre> child */
+      if (el.style.borderRadius === '16px' && !el.classList.contains('lb-ai-doc')
+          && !el.classList.contains('lb-ai-msg')) {
+        for (var j = 0; j < el.children.length; j++) {
+          if (el.children[j].tagName === 'PRE') {
+            el.classList.add('lb-user-msg');
+            el.style.setProperty('background',    '#C89820', 'important');
+            el.style.setProperty('color',         '#ffffff', 'important');
+            el.style.setProperty('border-radius', '18px',    'important');
+            el.style.setProperty('border',        'none',    'important');
+            el.style.setProperty('max-width',     '60%',     'important');
+            el.style.setProperty('margin-left',   'auto',    'important');
+            el.querySelectorAll('*').forEach(function (c) {
+              c.style.setProperty('color', '#ffffff', 'important');
+            });
+            break;
+          }
+        }
+      }
+    }
+  }
+
+  /* ── Greeting + pills visibility ─────────────────────────────────────── */
+  function syncVisibility() {
+    var emptyPresent = !!document.querySelector('[data-lb-done]');
+    var greet = $id('lb-greeting');
+    var pills = $id('lb-pills');
+    var email = $id('lb-email');
+    if (greet) greet.style.display = emptyPresent ? '' : 'none';
+    if (pills) pills.style.display = emptyPresent ? 'flex' : 'none';
+    if (email && !emptyPresent) email.classList.remove('open');
+  }
+
+  /* ── Pills ───────────────────────────────────────────────────────────── */
+  function injectPills(ta) {
+    if ($id('lb-pills')) return;
+    var defs = [
+      { label: '✉ Email Drafter',     action: 'email' },
+      { label: '🔍 Research',         action: 'nav', url: '/legal-database'  },
+      { label: '📄 Analyze Document', action: 'nav', url: '/doc-analyzer'    },
+      { label: '⚖ Analyze Motion',    action: 'nav', url: '/motion-analyzer' },
+    ];
+    var row = document.createElement('div');
+    row.id = 'lb-pills';
+    defs.forEach(function (def) {
+      var btn = document.createElement('button');
+      btn.className = 'lb-pill';
+      btn.textContent = def.label;
+      btn.addEventListener('click', function () {
+        if (def.action === 'nav') { window.location.href = def.url; }
+        else { openEmail(); }
+      });
+      row.appendChild(btn);
+    });
+    var target = (ta.parentElement && ta.parentElement.parentElement && ta.parentElement.parentElement.parentElement)
+              || (ta.parentElement && ta.parentElement.parentElement)
+              || ta.parentElement;
+    if (target) target.appendChild(row);
+  }
+
+  /* ── Textarea styling ────────────────────────────────────────────────── */
+  function styleTextarea(ta) {
+    if (ta.dataset.lbStyled) return;
+    ta.dataset.lbStyled = '1';
+    ta.style.setProperty('background',    '#ffffff',                    'important');
+    ta.style.setProperty('border-radius', '16px',                       'important');
+    ta.style.setProperty('border',        '1px solid #e0e0e0',          'important');
+    ta.style.setProperty('box-shadow',    '0 2px 8px rgba(0,0,0,0.06)', 'important');
+    ta.style.setProperty('color',         '#1a1a1a',                    'important');
+  }
+
+  /* ── Email Drafter ───────────────────────────────────────────────────── */
+  var emailDraftId = null;
+
+  function buildEmail() {
+    var p = document.createElement('div');
+    p.id = 'lb-email';
+    p.innerHTML = [
+      '<button id="lb-ec" title="Close">&#x2715;</button>',
+      '<div class="lbe-title">&#9993;&nbsp; Email Drafter</div>',
+      '<div class="lbe-row"><label class="lbe-lbl">To</label>',
+        '<input id="lb-ef-to" class="lbe-in" type="email" placeholder="recipient@example.com"></div>',
+      '<div class="lbe-row"><label class="lbe-lbl">From</label>',
+        '<input id="lb-ef-from" class="lbe-in" type="email" readonly></div>',
+      '<div class="lbe-row"><label class="lbe-lbl">Subject</label>',
+        '<input id="lb-ef-subj" class="lbe-in" type="text" placeholder="Email subject"></div>',
+      '<div class="lbe-row"><label class="lbe-lbl">Describe the email</label>',
+        '<textarea id="lb-ef-prompt" class="lbe-ta" placeholder="Describe what the email should say..."></textarea></div>',
+      '<div id="lb-body-wrap"><label class="lbe-lbl">Generated Body (editable)</label>',
+        '<div id="lb-body" contenteditable="true" spellcheck="true"></div></div>',
+      '<div class="lbe-btns">',
+        '<button id="lb-gen">&#10024; Generate</button>',
+        '<button id="lb-send">&#9654; Send</button>',
+        '<button id="lb-save">&#128190; Save</button>',
+      '</div>',
+      '<div id="lb-estat"></div>',
+    ].join('');
+    return p;
+  }
+
+  function setStatus(msg, col) {
+    var el = $id('lb-estat');
+    if (el) { el.textContent = msg; el.style.color = col || 'rgba(255,255,255,.55)'; }
+  }
+
+  function wireEmail() {
+    var fromEl = $id('lb-ef-from'); if (fromEl && userEmail) fromEl.value = userEmail;
+    var subjEl = $id('lb-ef-subj');
+    if (subjEl) subjEl.addEventListener('input', function () { this._edited = true; });
+    $id('lb-ec').addEventListener('click', closeEmail);
+
+    var genBtn = $id('lb-gen');
+    genBtn.addEventListener('click', function () {
+      var to     = ($id('lb-ef-to')     || {}).value || '';
+      var subj   = ($id('lb-ef-subj')   || {}).value || '';
+      var prompt = ($id('lb-ef-prompt') || {}).value || '';
+      if (!to || !subj || !prompt) { setStatus('Fill in all three fields first.', '#f87171'); return; }
+      genBtn.disabled = true;
+      setStatus('Generating…');
+      api('/api/legal-brain/email/draft', {
+        method: 'POST',
+        body: JSON.stringify({ to_email: to, subject: subj, context: prompt })
+      }).then(function (d) {
+        genBtn.disabled = false;
+        if (d && d.email_id) {
+          emailDraftId = d.email_id;
+          var bodyEl = $id('lb-body'), bodyWrap = $id('lb-body-wrap');
+          if (bodyEl)   bodyEl.innerHTML = d.body_html || '';
+          if (bodyWrap) bodyWrap.style.display = 'block';
+          if (d.subject && subjEl && !subjEl._edited) subjEl.value = d.subject;
+          var s = $id('lb-send'); if (s) s.style.display = '';
+          var sv = $id('lb-save'); if (sv) sv.style.display = '';
+          setStatus('Generated — review and edit before sending.', '#34d399');
+        } else {
+          setStatus('Failed to generate. Try again.', '#f87171');
+        }
+      }).catch(function () { genBtn.disabled = false; setStatus('Network error.', '#f87171'); });
+    });
+
+    var sendBtn = $id('lb-send');
+    sendBtn.addEventListener('click', function () {
+      var bodyEl = $id('lb-body');
+      if (!bodyEl || !bodyEl.innerHTML.trim()) { setStatus('Body is empty.', '#f87171'); return; }
+      sendBtn.disabled = true; setStatus('Sending…');
+      var req = emailDraftId
+        ? api('/api/legal-brain/email/' + emailDraftId + '/send', { method: 'POST' })
+        : Promise.resolve({ sent: false });
+      req.then(function (r) {
+        if (r && r.sent) setStatus('Sent!', '#34d399');
+        else setStatus('Send failed. Try again.', '#f87171');
+        sendBtn.disabled = false;
+      }).catch(function () { setStatus('Network error.', '#f87171'); sendBtn.disabled = false; });
+    });
+
+    var saveBtn = $id('lb-save');
+    saveBtn.addEventListener('click', function () {
+      var bodyEl = $id('lb-body');
+      var body   = bodyEl ? bodyEl.innerText : '';
+      if (!body.trim()) { setStatus('Nothing to save.', '#f87171'); return; }
+      saveBtn.disabled = true; setStatus('Saving…');
+      api('/api/legal-brain/chat', {
+        method: 'POST',
+        body: JSON.stringify({ content: '[Saved Email]\n' + body })
+      }).then(function () {
+        setStatus('Saved to Legal Brain history.', '#34d399'); saveBtn.disabled = false;
+      }).catch(function () { setStatus('Error saving.', '#f87171'); saveBtn.disabled = false; });
+    });
+  }
+
+  function openEmail() {
+    var panel = $id('lb-email'); if (!panel) return;
+    emailDraftId = null;
+    var ids = ['lb-ef-to','lb-ef-subj','lb-ef-prompt'];
+    for (var i = 0; i < ids.length; i++) {
+      var el = $id(ids[i]); if (el) { el.value = ''; el._edited = false; }
+    }
+    var fr = $id('lb-ef-from'); if (fr) fr.value = userEmail || '';
+    var bodyEl = $id('lb-body'); if (bodyEl) bodyEl.innerHTML = '';
+    var bodyWrap = $id('lb-body-wrap'); if (bodyWrap) bodyWrap.style.display = 'none';
+    var s = $id('lb-send'); if (s) s.style.display = 'none';
+    var sv = $id('lb-save'); if (sv) sv.style.display = 'none';
+    var g = $id('lb-gen'); if (g) g.disabled = false;
+    setStatus('');
+    panel.classList.add('open');
+    panel.scrollIntoView({ behavior: 'smooth', block: 'nearest' });
+  }
+
+  function closeEmail() {
+    var panel = $id('lb-email'); if (panel) panel.classList.remove('open');
+  }
+
+  /* ── Main injection ──────────────────────────────────────────────────── */
+  function applyInjections() {
+    if (!onLB()) return;
+    var emptyState = null;
+    var divs = document.querySelectorAll('div');
+    for (var i = 0; i < divs.length; i++) {
+      if (divs[i].style.textAlign === 'center' && divs[i].style.paddingTop === '32px') {
+        emptyState = divs[i]; break;
+      }
+    }
+    if (!emptyState || emptyState.dataset.lbDone) return;
+    emptyState.dataset.lbDone = '1';
+    injected = true;
+    loadUser();
+    applyMainBg(emptyState);
+    injectGreeting(emptyState);
+    var ta = document.querySelector('textarea');
+    if (ta) {
+      styleTextarea(ta);
+      if (!$id('lb-pills')) {
+        injectPills(ta);
+        var pillsEl = $id('lb-pills');
+        if (pillsEl && pillsEl.parentElement && !$id('lb-email')) {
+          pillsEl.parentElement.appendChild(buildEmail());
+          wireEmail();
+        }
+      }
+    }
+    syncVisibility();
+  }
+
+  /* ── Cleanup ─────────────────────────────────────────────────────────── */
+  function cleanup() {
+    injected = false;
+    ['lb-style','lb-greeting','lb-pills','lb-email'].forEach(function (id) {
+      var el = $id(id); if (el) el.remove();
+    });
+    document.querySelectorAll('[data-lb-done]').forEach(function (el) {
+      delete el.dataset.lbDone;
+    });
+    document.querySelectorAll('[data-lb-bg]').forEach(function (el) {
+      el.style.removeProperty('background'); delete el.dataset.lbBg;
+    });
+    document.querySelectorAll('[data-lb-ai-outer]').forEach(function (el) {
+      el.style.removeProperty('background');
+      el.style.removeProperty('border');
+      el.style.removeProperty('box-shadow');
+      delete el.dataset.lbAiOuter;
+    });
+  }
+
+  /* ── Observer ────────────────────────────────────────────────────────── */
+  var observer = new MutationObserver(function () {
+    if (onLB()) {
+      injectStyles();
+      applyInjections();
+      applyAiStyles();
+      syncVisibility();
+    } else if (injected) {
+      cleanup();
+    }
+  });
+
+  function boot() {
+    if (onLB()) injectStyles();
+    observer.observe(document.body, { childList: true, subtree: true });
+    ['pushState', 'replaceState'].forEach(function (fn) {
+      var orig = history[fn];
+      history[fn] = function () {
+        orig.apply(history, arguments);
+        setTimeout(function () { if (!onLB() && injected) cleanup(); }, 300);
+      };
+    });
+    window.addEventListener('popstate', function () {
+      setTimeout(function () { if (!onLB() && injected) cleanup(); }, 300);
+    });
+    if (onLB()) {
+      setTimeout(function () { applyInjections(); applyAiStyles(); syncVisibility(); }, 500);
+    }
+  }
+
+  if (document.readyState === 'loading') {
+    document.addEventListener('DOMContentLoaded', boot);
+  } else {
+    boot();
+  }
+})();
