@@ -338,12 +338,21 @@ export default function CaseDetail() {
     if (!newTask.title.trim() || !id) return
     setAddT(true)
     try {
-      const r = await axios.post(`/api/cases/${id}/tasks`, newTask, { headers: jHdrs() })
+      const payload: Record<string, string> = {
+        title: newTask.title.trim(),
+        priority: newTask.priority,
+      }
+      if (newTask.description.trim()) payload.description = newTask.description.trim()
+      if (newTask.due_date) payload.due_date = newTask.due_date
+      if (newTask.assigned_to.trim()) payload.assigned_to = newTask.assigned_to.trim()
+      const r = await axios.post(`/api/cases/${id}/tasks`, payload, { headers: jHdrs() })
       setTasks(p => [...p, r.data?.task ?? r.data])
       setNewTask({ title: '', priority: 'medium', due_date: '', description: '', assigned_to: '' })
       setSTF(false)
-      setCd(p => p ? { ...p, task_count: (p.task_count ?? 0) + 1 } : p)
-    } catch { /* ignore */ } finally { setAddT(false) }
+      setCd(p => p ? { ...p, task_count: (p.task_count ?? 0) + 1, tasks_total: (p.tasks_total ?? 0) + 1 } : p)
+    } catch {
+      alert('Failed to add task. Please try again.')
+    } finally { setAddT(false) }
   }
   const toggleTask = async (t: TaskItem) => {
     const next = t.status === 'pending' ? 'in_progress' : t.status === 'in_progress' ? 'completed' : 'pending'

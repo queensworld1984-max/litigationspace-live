@@ -979,6 +979,138 @@ def _calculate_urgency_score(case: dict) -> float:
     return max(0, min(100, score))
 
 
+_WORKFLOW_CASE_TYPE_ALIASES = {
+    "litigation": "civil_litigation",
+    "civil": "civil_litigation",
+    "immigration": "immigration_law",
+    "immigration_h1b": "immigration_law",
+    "immigration_o1": "immigration_law",
+    "criminal": "criminal_litigation",
+    "family": "civil_litigation",
+    "corporate": "civil_litigation",
+    "real_estate": "civil_litigation",
+    "ip": "civil_litigation",
+    "other": "civil_litigation",
+}
+
+
+def _resolve_workflow_case_type(case_type: Optional[str], forum: Optional[str] = None) -> str:
+    """Map frontend case_type values to workflow_templates.case_type keys."""
+    ct = (case_type or "other").strip().lower()
+    if ct in _WORKFLOW_CASE_TYPE_ALIASES:
+        return _WORKFLOW_CASE_TYPE_ALIASES[ct]
+    if forum:
+        forum_lower = forum.lower()
+        if any(x in forum_lower for x in ("uscis", "eoir", "bia", "immigration", "asylum", "dhs", "ice", "cbp", "nvc")):
+            return "immigration_law"
+        if "arbitration" in forum_lower:
+            return "arbitration"
+        if "mediation" in forum_lower:
+            return "mediation"
+        if any(x in forum_lower for x in ("criminal", "crown court", "magistrate")):
+            return "criminal_litigation"
+    return ct
+
+
+def _ai_generate_case_tasks(jurisdiction: str, forum: str, matter_type: str, case_title: str) -> list:
+    """Use OpenAI to generate practical tasks for a new case."""
+    api_key = os.environ.get("OPENAI_API_KEY")
+    if not api_key:
+        return []
+    try:
+        from openai import OpenAI
+        client = OpenAI(api_key=api_key)
+        prompt = (
+            f"You are an expert legal case manager. Generate a practical, ordered task list for the following matter:\n\n"
+            f"Jurisdiction: {jurisdiction or 'Unknown'}\n"
+            f"Forum / Agency / Court: {forum or 'Unknown'}\n"
+            f"Matter Type: {matter_type or 'Unknown'}\n"
+            f"Case Title: {case_title}\n\n"
+            f"Rules:\n"
+            f"- Return ONLY a JSON array of strings, no commentary, no markdown, no extra text.\n"
+            f"- Each string is a single task title (max 120 chars).\n"
+            f"- Generate 15-25 tasks.\n"
+            f"- Tasks must be specific to this jurisdiction, forum, and matter type.\n"
+            f"- Order tasks chronologically by when they typically occur in the proceeding.\n"
+            f"- Do NOT include generic tasks like 'Open file' or 'Create folder'.\n\n"
+            f"Return only the JSON array."
+        )
+        response = client.chat.completions.create(
+            model=get_model_for_task("case_task_generation"),
+            messages=[{"role": "user", "content": prompt}],
+            max_completion_tokens=1200,
+            temperature=0.3,
+        )
+        raw = response.choices[0].message.content.strip()
+        if raw.startswith("```"):
+            raw = raw.split("```")[1]
+            if raw.startswith("json"):
+                raw = raw[4:]
+        tasks = json.loads(raw.strip())
+        if isinstance(tasks, list):
+            return [str(t) for t in tasks if t]
+        return []
+    except Exception as e:
+        logger.warning("[AI TASKS] Generation failed: %s", e)
+        return []
+
+
+def _insert_case_tasks(db, case_id: str, tenant_id: str, task_titles: list) -> int:
+    for task_title in task_titles:
+        task_id = generate_id()
+        db.execute(
+            """INSERT INTO tasks (id, case_id, tenant_id, title, status, priority)
+               VALUES (?, ?, ?, ?, 'pending', 'medium')""",
+            (task_id, case_id, tenant_id, task_title),
+        )
+    return len(task_titles)
+
+
+def _populate_case_tasks(
+    db,
+    case_id: str,
+    tenant_id: str,
+    case_type: str,
+    jurisdiction: Optional[str],
+    forum: Optional[str],
+    matter_type: Optional[str],
+    case_title: str,
+) -> int:
+    """Create initial tasks via AI, then workflow template fallbacks."""
+    ai_tasks = _ai_generate_case_tasks(
+        jurisdiction=jurisdiction or "",
+        forum=forum or "",
+        matter_type=matter_type or case_type or "",
+        case_title=case_title,
+    )
+    if ai_tasks:
+        count = _insert_case_tasks(db, case_id, tenant_id, ai_tasks)
+        logger.info("[AI TASKS] Generated %d tasks for case %s", count, case_id)
+        return count
+
+    resolved = _resolve_workflow_case_type(case_type, forum)
+    for template_type in dict.fromkeys([resolved, case_type, "civil_litigation"]):
+        if not template_type:
+            continue
+        template = db.execute(
+            "SELECT * FROM workflow_templates WHERE case_type = ?",
+            (template_type,),
+        ).fetchone()
+        if template:
+            tasks = json.loads(template["tasks_json"])
+            count = _insert_case_tasks(db, case_id, tenant_id, tasks)
+            logger.info("[TASKS] Seeded %d tasks from template %s for case %s", count, template_type, case_id)
+            return count
+    return 0
+
+
+def _opt_str(value: Optional[str]) -> Optional[str]:
+    if value is None:
+        return None
+    cleaned = str(value).strip()
+    return cleaned or None
+
+
 @router.get("")
 async def list_cases(
     status: str = None,
@@ -1038,14 +1170,15 @@ async def list_cases(
 
 @router.post("")
 async def create_case(req: CaseCreate, current_user: dict = Depends(get_current_user)):
-    """Create a new case."""
+    """Create a new case with AI- or template-generated tasks."""
     tenant_id = current_user["tenant_id"]
     case_id = generate_id()
     now = datetime.now(timezone.utc).isoformat()
 
     case_number = (req.case_number or "").strip() or None
-
     exhibit_numbering = req.exhibit_numbering if req.exhibit_numbering in EXHIBIT_SCHEMES else "letters"
+    derived_case_type = _resolve_workflow_case_type(req.case_type, req.forum)
+    court_value = req.court or req.forum or None
 
     case_data = {
         "id": case_id,
@@ -1053,10 +1186,14 @@ async def create_case(req: CaseCreate, current_user: dict = Depends(get_current_
         "title": req.title,
         "case_number": case_number,
         "case_type": req.case_type,
+        "jurisdiction": req.jurisdiction,
+        "forum": req.forum,
+        "matter_type": req.matter_type,
+        "party_roles": req.party_roles,
         "description": req.description,
         "client_name": req.client_name,
         "opposing_party": req.opposing_party,
-        "court": req.court,
+        "court": court_value,
         "judge": req.judge,
         "filing_deadline": req.filing_deadline,
         "trial_date": req.trial_date,
@@ -1074,33 +1211,29 @@ async def create_case(req: CaseCreate, current_user: dict = Depends(get_current_
 
     with get_db() as db:
         db.execute(
-            """INSERT INTO cases (id, tenant_id, title, case_number, case_type, description,
-               client_name, opposing_party, court, judge, filing_deadline, trial_date,
-               uscis_receipt_number, priority, urgency_score, exhibit_numbering, created_by, assigned_attorney_id,
+            """INSERT INTO cases (id, tenant_id, title, case_number, case_type,
+               jurisdiction, forum, matter_type, party_roles,
+               description, client_name, opposing_party, court, judge,
+               filing_deadline, trial_date, uscis_receipt_number,
+               priority, urgency_score, exhibit_numbering, created_by, assigned_attorney_id,
                created_at, updated_at)
-               VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)""",
-            (case_id, tenant_id, req.title, case_number, req.case_type, req.description,
-             req.client_name, req.opposing_party, req.court, req.judge, req.filing_deadline,
-             req.trial_date, req.uscis_receipt_number, req.priority, urgency, exhibit_numbering,
+               VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)""",
+            (case_id, tenant_id, req.title, case_number, req.case_type,
+             req.jurisdiction, req.forum, req.matter_type, req.party_roles,
+             req.description, req.client_name, req.opposing_party, court_value, req.judge,
+             req.filing_deadline, req.trial_date, req.uscis_receipt_number,
+             req.priority, urgency, exhibit_numbering,
              current_user["sub"], current_user["sub"], now, now)
         )
 
-        # Auto-populate tasks from workflow template if case_type matches
-        template = db.execute(
-            "SELECT * FROM workflow_templates WHERE case_type = ?",
-            (req.case_type,)
-        ).fetchone()
-        if template:
-            tasks = json.loads(template["tasks_json"])
-            for i, task_title in enumerate(tasks):
-                task_id = generate_id()
-                db.execute(
-                    """INSERT INTO tasks (id, case_id, tenant_id, title, status, priority)
-                       VALUES (?, ?, ?, ?, 'pending', 'medium')""",
-                    (task_id, case_id, tenant_id, task_title)
-                )
+        task_count = _populate_case_tasks(
+            db, case_id, tenant_id, req.case_type,
+            req.jurisdiction, req.forum, req.matter_type or req.case_type, req.title,
+        )
 
     case_data["task_stats"] = {}
+    case_data["task_count"] = task_count
+    case_data["tasks_total"] = task_count
     return case_data
 
 
@@ -1316,16 +1449,39 @@ async def create_task(
         if not case:
             raise HTTPException(status_code=404, detail="Case not found")
 
-        db.execute(
-            """INSERT INTO tasks (id, case_id, tenant_id, title, description, assigned_to,
-               due_date, priority, parent_task_id)
-               VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)""",
-            (task_id, case_id, tenant_id, req.title, req.description, req.assigned_to,
-             req.due_date, req.priority, req.parent_task_id)
-        )
+        description = _opt_str(req.description)
+        assigned_to = _opt_str(req.assigned_to)
+        due_date = _opt_str(req.due_date)
+        parent_task_id = _opt_str(req.parent_task_id)
+
+        if assigned_to:
+            user = db.execute(
+                "SELECT id FROM users WHERE (id = ? OR LOWER(email) = LOWER(?)) AND tenant_id = ?",
+                (assigned_to, assigned_to, tenant_id),
+            ).fetchone()
+            if user:
+                assigned_to = user["id"]
+            else:
+                note = f"Assigned to: {assigned_to}"
+                description = f"{note}\n{description}" if description else note
+                assigned_to = None
+
+        try:
+            db.execute(
+                """INSERT INTO tasks (id, case_id, tenant_id, title, description, assigned_to,
+                   due_date, priority, parent_task_id)
+                   VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)""",
+                (task_id, case_id, tenant_id, req.title.strip(), description, assigned_to,
+                 due_date, req.priority, parent_task_id)
+            )
+        except Exception as e:
+            logger.error("Failed to create task for case %s: %s", case_id, e)
+            raise HTTPException(status_code=500, detail="Failed to create task") from e
+
         return {
-            "id": task_id, "case_id": case_id, "title": req.title,
-            "status": "pending", "priority": req.priority
+            "id": task_id, "case_id": case_id, "title": req.title.strip(),
+            "status": "pending", "priority": req.priority,
+            "description": description, "assigned_to": assigned_to, "due_date": due_date,
         }
 
 
