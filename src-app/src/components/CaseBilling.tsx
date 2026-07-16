@@ -35,6 +35,7 @@ interface BillingTask {
   estimated_hours?: number; task_date?: string; target_end_date?: string; status: string
   scope_status?: string; billing_status?: string; billing_amount?: number
   invoice_id?: string | null
+  scope_reminder_count?: number; billing_reminder_count?: number
 }
 interface TaskAttachment {
   id: string; filename: string; mime_type?: string; size_bytes?: number
@@ -436,6 +437,30 @@ export default function CaseBilling({ caseId }: { caseId: string }) {
     } finally { setApprovalBusyId(null) }
   }
 
+  const remindScope = async (taskId: string) => {
+    setApprovalBusyId(taskId)
+    try {
+      await billingAPI.remindScopeApproval(taskId)
+      setApprovalMsg(p => ({ ...p, [taskId]: '✓ Reminder sent' }))
+      await loadTasks(contracts)
+    } catch (err: unknown) {
+      const detail = (err as { response?: { data?: { detail?: string } } })?.response?.data?.detail
+      setApprovalMsg(p => ({ ...p, [taskId]: `✕ ${detail || 'Failed to send reminder'}` }))
+    } finally { setApprovalBusyId(null) }
+  }
+
+  const remindBilling = async (taskId: string) => {
+    setApprovalBusyId(taskId)
+    try {
+      await billingAPI.remindBillingApproval(taskId)
+      setApprovalMsg(p => ({ ...p, [taskId]: '✓ Reminder sent' }))
+      await loadTasks(contracts)
+    } catch (err: unknown) {
+      const detail = (err as { response?: { data?: { detail?: string } } })?.response?.data?.detail
+      setApprovalMsg(p => ({ ...p, [taskId]: `✕ ${detail || 'Failed to send reminder'}` }))
+    } finally { setApprovalBusyId(null) }
+  }
+
   const openSendBilling = async (task: BillingTask) => {
     setBillTarget(task); setBillSummary(''); setBillNewFiles([]); setBillError('')
     setModal('send-billing')
@@ -596,6 +621,8 @@ export default function CaseBilling({ caseId }: { caseId: string }) {
                           const amt = t.billing_type === 'flat_fee' ? (t.flat_fee_amount || 0) : (t.estimated_hours || 0) * (t.hourly_rate || 0)
                           const needsScope = !t.scope_status || t.scope_status === 'pending' || t.scope_status === 'rejected'
                           const needsBilling = t.scope_status === 'approved' && (!t.billing_status || t.billing_status === 'pending' || t.billing_status === 'rejected')
+                          const scopeAwaiting = t.scope_status === 'sent'
+                          const billingAwaiting = t.billing_status === 'sent'
                           return (
                             <div key={t.id} style={{ background: 'rgba(0,0,0,0.15)', border: `1px solid ${BD}`, borderRadius: 8, padding: '8px 12px' }}>
                               <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'flex-start', gap: 8 }}>
@@ -627,6 +654,18 @@ export default function CaseBilling({ caseId }: { caseId: string }) {
                                   <button onClick={() => openSendBilling(t)}
                                     style={{ background: 'rgba(217,119,6,0.15)', border: '1px solid rgba(217,119,6,0.35)', color: '#fbbf24', borderRadius: 6, padding: '2px 8px', fontSize: '0.65rem', fontWeight: 700, cursor: 'pointer' }}>
                                     Send Bill for Approval
+                                  </button>
+                                )}
+                                {scopeAwaiting && (
+                                  <button onClick={() => remindScope(t.id)} disabled={approvalBusyId === t.id}
+                                    style={{ background: 'rgba(251,191,36,0.15)', border: '1px solid rgba(251,191,36,0.35)', color: '#fbbf24', borderRadius: 6, padding: '2px 8px', fontSize: '0.65rem', fontWeight: 700, cursor: 'pointer', opacity: approvalBusyId === t.id ? 0.5 : 1 }}>
+                                    🔔 Remind (Scope){t.scope_reminder_count ? ` · ${t.scope_reminder_count}` : ''}
+                                  </button>
+                                )}
+                                {billingAwaiting && (
+                                  <button onClick={() => remindBilling(t.id)} disabled={approvalBusyId === t.id}
+                                    style={{ background: 'rgba(251,191,36,0.15)', border: '1px solid rgba(251,191,36,0.35)', color: '#fbbf24', borderRadius: 6, padding: '2px 8px', fontSize: '0.65rem', fontWeight: 700, cursor: 'pointer', opacity: approvalBusyId === t.id ? 0.5 : 1 }}>
+                                    🔔 Remind (Bill){t.billing_reminder_count ? ` · ${t.billing_reminder_count}` : ''}
                                   </button>
                                 )}
                                 {approvalMsg[t.id] && <span style={{ fontSize: '0.65rem', color: approvalMsg[t.id].startsWith('✓') ? '#34d399' : '#f87171' }}>{approvalMsg[t.id]}</span>}

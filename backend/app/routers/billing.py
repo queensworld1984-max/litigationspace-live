@@ -22,6 +22,7 @@ from app.utils.email import (
     send_billing_approved_contractor_email, send_billing_approved_confirm_client_email,
     send_deadline_reminder_contractor_email, send_deadline_reminder_client_email,
     send_scope_query_contractor_email, send_scope_rejected_contractor_email,
+    send_scope_reminder_email, send_billing_reminder_email,
     parse_recipients,
 )
 from app.utils.subscription import resolve_subscription, init_trial, PLAN_MONTHLY_CREDITS
@@ -32,6 +33,7 @@ router = APIRouter(prefix="/api/v1/billing", tags=["billing"])
 
 FRONTEND_URL = os.environ.get("FRONTEND_URL", "https://litigationspace.com")
 APPROVAL_TOKEN_EXPIRY_HOURS = 168  # 7 days
+REMINDER_MIN_INTERVAL_HOURS = 24  # don't let a reminder go out more than once a day for the same task
 
 # Documents attached to a task when sending it for billing approval —
 # stored alongside the case-document uploads, same base dir.
@@ -675,9 +677,11 @@ async def send_scope_approval(task_id: str, req: ApprovalSendRequest = ApprovalS
         expires_at = (datetime.now(timezone.utc) + timedelta(hours=APPROVAL_TOKEN_EXPIRY_HOURS)).isoformat()
         db.execute(
             """UPDATE contract_tasks SET scope_status='sent', scope_token=?, scope_token_expires_at=?,
-               scope_requested_by=?, scope_requested_by_email=?, scope_recipient_name=?, scope_recipient_email=?
+               scope_requested_by=?, scope_requested_by_email=?, scope_recipient_name=?, scope_recipient_email=?,
+               scope_sent_at=?, scope_reminder_count=0, scope_last_reminded_at=NULL
                WHERE id=?""",
-            (token, expires_at, requester_name, requester_email, recipient_name, recipient_email, task_id)
+            (token, expires_at, requester_name, requester_email, recipient_name, recipient_email,
+             datetime.now(timezone.utc).isoformat(), task_id)
         )
 
         approval_url = f"{FRONTEND_URL}/approve-scope/{token}"
@@ -762,6 +766,69 @@ async def query_scope(token: str, req: ScopeQuery, request: Request):
         _query_scope_gate(db, task, ip, note)
     _notify_contractor_scope_query(task, note)
     return {"message": "Question sent back to your contractor"}
+
+
+@router.post("/tasks/{task_id}/scope/remind")
+async def remind_scope_approval(task_id: str, current_user: dict = Depends(get_current_user)):
+    """Resend the existing Gate 1 approval link as a nudge, for a supervisor
+    who hasn't acted on it yet. Reuses the original link (refreshing it if it
+    expired) rather than starting a new request. Throttled so it can't be
+    fired more than once a day for the same task."""
+    tenant_id = current_user["tenant_id"]
+    with get_db() as db:
+        task = db.execute(
+            "SELECT * FROM contract_tasks WHERE id = ? AND tenant_id = ?",
+            (task_id, tenant_id)
+        ).fetchone()
+        if not task:
+            raise HTTPException(status_code=404, detail="Task not found")
+        task_d = dict(task)
+
+        if task_d.get("scope_status") != "sent":
+            raise HTTPException(status_code=400, detail="This task has no pending scope approval to remind about")
+        if not task_d.get("scope_recipient_email"):
+            raise HTTPException(status_code=400, detail="No recipient on file for this request")
+
+        now = datetime.now(timezone.utc)
+        last_reminded = task_d.get("scope_last_reminded_at")
+        if last_reminded:
+            elapsed_hours = (now - datetime.fromisoformat(last_reminded)).total_seconds() / 3600
+            if elapsed_hours < REMINDER_MIN_INTERVAL_HOURS:
+                wait_hours = round(REMINDER_MIN_INTERVAL_HOURS - elapsed_hours, 1)
+                raise HTTPException(status_code=429, detail=f"A reminder was already sent recently — wait {wait_hours}h before sending another")
+
+        token = task_d.get("scope_token")
+        expires_at = task_d.get("scope_token_expires_at")
+        if not token or not expires_at or datetime.fromisoformat(expires_at) <= now:
+            token = secrets.token_urlsafe(32)
+            expires_at = (now + timedelta(hours=APPROVAL_TOKEN_EXPIRY_HOURS)).isoformat()
+
+        sent_at = task_d.get("scope_sent_at") or now.isoformat()
+        days_pending = max(0, (now - datetime.fromisoformat(sent_at)).days)
+        reminder_count = (task_d.get("scope_reminder_count") or 0) + 1
+
+        db.execute(
+            """UPDATE contract_tasks SET scope_token=?, scope_token_expires_at=?,
+               scope_reminder_count=?, scope_last_reminded_at=? WHERE id=?""",
+            (token, expires_at, reminder_count, now.isoformat(), task_id)
+        )
+
+        approval_url = f"{FRONTEND_URL}/approve-scope/{token}"
+        ok, detail = send_scope_reminder_email(
+            to_email=task_d["scope_recipient_email"],
+            client_name=task_d.get("scope_recipient_name") or "there",
+            sender_name=task_d.get("scope_requested_by") or current_user.get("email", "Your contractor"),
+            task_title=task_d["title"],
+            entity_name=task_d.get("entity_name") or "",
+            approval_url=approval_url,
+            days_pending=days_pending,
+        )
+    if not ok:
+        raise HTTPException(
+            status_code=502,
+            detail=f"Saved, but the reminder email failed to send ({detail}). Share this link directly: {approval_url}",
+        )
+    return {"message": "Reminder sent", "approval_url": approval_url, "sent_to": task_d["scope_recipient_email"], "reminder_count": reminder_count}
 
 
 # ─── Task attachments — finished documents sent along with a bill ────
@@ -938,9 +1005,10 @@ async def send_billing_approval(task_id: str, req: ApprovalSendRequest = Approva
         db.execute(
             """UPDATE contract_tasks SET billing_status='sent', billing_token=?, billing_token_expires_at=?, billing_amount=?,
                billing_requested_by=?, billing_requested_by_email=?, billing_recipient_name=?, billing_recipient_email=?,
-               billing_summary_text=?
+               billing_summary_text=?, billing_sent_at=?, billing_reminder_count=0, billing_last_reminded_at=NULL
                WHERE id=?""",
-            (token, expires_at, amount, requester_name, requester_email, recipient_name, recipient_email, summary_text, task_id)
+            (token, expires_at, amount, requester_name, requester_email, recipient_name, recipient_email, summary_text,
+             datetime.now(timezone.utc).isoformat(), task_id)
         )
 
         attachment_count = db.execute(
@@ -969,6 +1037,70 @@ async def send_billing_approval(task_id: str, req: ApprovalSendRequest = Approva
             ),
         )
     return {"message": "Billing approval request sent", "amount": amount, "approval_url": approval_url, "sent_to": recipients}
+
+
+@router.post("/tasks/{task_id}/billing/remind")
+async def remind_billing_approval(task_id: str, current_user: dict = Depends(get_current_user)):
+    """Resend the existing Gate 2 approval link as a nudge, for a supervisor
+    who hasn't approved the bill yet. Reuses the original link (refreshing it
+    if it expired) rather than starting a new request. Throttled so it can't
+    be fired more than once a day for the same task."""
+    tenant_id = current_user["tenant_id"]
+    with get_db() as db:
+        task = db.execute(
+            "SELECT * FROM contract_tasks WHERE id = ? AND tenant_id = ?",
+            (task_id, tenant_id)
+        ).fetchone()
+        if not task:
+            raise HTTPException(status_code=404, detail="Task not found")
+        task_d = dict(task)
+
+        if task_d.get("billing_status") != "sent":
+            raise HTTPException(status_code=400, detail="This task has no pending billing approval to remind about")
+        if not task_d.get("billing_recipient_email"):
+            raise HTTPException(status_code=400, detail="No recipient on file for this request")
+
+        now = datetime.now(timezone.utc)
+        last_reminded = task_d.get("billing_last_reminded_at")
+        if last_reminded:
+            elapsed_hours = (now - datetime.fromisoformat(last_reminded)).total_seconds() / 3600
+            if elapsed_hours < REMINDER_MIN_INTERVAL_HOURS:
+                wait_hours = round(REMINDER_MIN_INTERVAL_HOURS - elapsed_hours, 1)
+                raise HTTPException(status_code=429, detail=f"A reminder was already sent recently — wait {wait_hours}h before sending another")
+
+        token = task_d.get("billing_token")
+        expires_at = task_d.get("billing_token_expires_at")
+        if not token or not expires_at or datetime.fromisoformat(expires_at) <= now:
+            token = secrets.token_urlsafe(32)
+            expires_at = (now + timedelta(hours=APPROVAL_TOKEN_EXPIRY_HOURS)).isoformat()
+
+        sent_at = task_d.get("billing_sent_at") or now.isoformat()
+        days_pending = max(0, (now - datetime.fromisoformat(sent_at)).days)
+        reminder_count = (task_d.get("billing_reminder_count") or 0) + 1
+
+        db.execute(
+            """UPDATE contract_tasks SET billing_token=?, billing_token_expires_at=?,
+               billing_reminder_count=?, billing_last_reminded_at=? WHERE id=?""",
+            (token, expires_at, reminder_count, now.isoformat(), task_id)
+        )
+
+        approval_url = f"{FRONTEND_URL}/approve-bill/{token}"
+        ok, detail = send_billing_reminder_email(
+            to_email=task_d["billing_recipient_email"],
+            client_name=task_d.get("billing_recipient_name") or "there",
+            sender_name=task_d.get("billing_requested_by") or current_user.get("email", "Your contractor"),
+            task_title=task_d["title"],
+            entity_name=task_d.get("entity_name") or "",
+            amount=task_d.get("billing_amount") or 0,
+            approval_url=approval_url,
+            days_pending=days_pending,
+        )
+    if not ok:
+        raise HTTPException(
+            status_code=502,
+            detail=f"Saved, but the reminder email failed to send ({detail}). Share this link directly: {approval_url}",
+        )
+    return {"message": "Reminder sent", "approval_url": approval_url, "sent_to": task_d["billing_recipient_email"], "reminder_count": reminder_count}
 
 
 @router.get("/billing-approval/{token}")

@@ -325,9 +325,13 @@ export const billingAPI = {
     api.post(`/v1/billing/scope/${token}/reject`, { reason }),
   queryScope: (token: string, note: string) =>
     api.post(`/v1/billing/scope/${token}/query`, { note }),
+  remindScopeApproval: (taskId: string) =>
+    api.post(`/v1/billing/tasks/${taskId}/scope/remind`),
   // Two-gate task approval — billing (Gate 2)
   sendBillingApproval: (taskId: string, payload?: { recipient_name?: string; recipient_email?: string; summary_text?: string }) =>
     api.post(`/v1/billing/tasks/${taskId}/billing/send`, payload ?? {}),
+  remindBillingApproval: (taskId: string) =>
+    api.post(`/v1/billing/tasks/${taskId}/billing/remind`),
   getBillingApprovalByToken: (token: string) =>
     api.get(`/v1/billing/billing-approval/${token}`),
   approveBilling: (token: string) =>

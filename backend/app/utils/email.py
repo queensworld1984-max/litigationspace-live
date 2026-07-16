@@ -336,6 +336,79 @@ def send_scope_approval_email(to_email, client_name: str, sender_name: str,
     return _send_email(to_email, subject, html, sender=SMTP_FROM_BILLING)
 
 
+def send_scope_reminder_email(to_email, client_name: str, sender_name: str,
+                               task_title: str, entity_name: str,
+                               approval_url: str, days_pending: int) -> tuple:
+    """Nudge email for a Gate 1 scope-approval request that's already been sent
+    but hasn't been acted on yet — reuses the same approval link."""
+    subject = f"Reminder: still waiting on your approval — {task_title}"
+    pending_note = (
+        f"This has been waiting for your review for {days_pending} day{'s' if days_pending != 1 else ''} now."
+        if days_pending > 0 else "This is still waiting for your review."
+    )
+    html = f"""
+    <div style="font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif; max-width: 600px; margin: 0 auto; padding: 40px 20px;">
+        <div style="text-align: center; margin-bottom: 30px;">
+            <img src="https://litigationspace.com/logo.png" alt="LitigationSpace" style="height: 36px; display: inline-block;" />
+            <p style="color: #64748b; font-size: 14px; margin-top: 4px;">Reminder — Scope Approval Pending</p>
+        </div>
+        <div style="background: #f8fafc; border: 1px solid #e2e8f0; border-radius: 12px; padding: 32px;">
+            <h2 style="color: #1e293b; font-size: 20px; margin-top: 0;">Still waiting on your approval</h2>
+            <p style="color: #475569; line-height: 1.6;">Hi {client_name},</p>
+            <p style="color: #475569; line-height: 1.6;">Just a reminder from {sender_name} — no work has started on this task yet because it's still waiting on your sign-off. {pending_note}</p>
+            <div style="background: #eff6ff; border: 1px solid #93c5fd; border-radius: 8px; padding: 16px; margin: 20px 0;">
+                <p style="color: #1e3a8a; font-size: 13px; margin: 0 0 6px 0; text-transform: uppercase; letter-spacing: 0.05em;">For: {entity_name}</p>
+                <p style="color: #1e3a8a; font-size: 15px; margin: 0; font-weight: 600;">{task_title}</p>
+            </div>
+            <div style="text-align: center; margin: 30px 0;">
+                <a href="{approval_url}" style="display: inline-block; background-color: #2563eb; background: linear-gradient(135deg, #3b82f6, #2563eb); color: #ffffff; text-decoration: none; padding: 14px 32px; border-radius: 8px; font-weight: 600; font-size: 16px;">Review &amp; Approve Scope</a>
+            </div>
+            <p style="color: #94a3b8; font-size: 13px;">No work begins until you approve. Your decision and timestamp are recorded.</p>
+            <p style="color: #94a3b8; font-size: 12px; margin-top: 20px; word-break: break-all;">Or copy this link: {approval_url}</p>
+        </div>
+        <p style="color: #94a3b8; font-size: 12px; text-align: center; margin-top: 20px;">&copy; 2026 LitigationSpace. All rights reserved.</p>
+    </div>
+    """
+    return _send_email(to_email, subject, html, sender=SMTP_FROM_BILLING)
+
+
+def send_billing_reminder_email(to_email, client_name: str, sender_name: str,
+                                 task_title: str, entity_name: str, amount: float,
+                                 approval_url: str, days_pending: int) -> tuple:
+    """Nudge email for a Gate 2 billing-approval request that's already been
+    sent but hasn't been acted on yet — reuses the same approval link."""
+    subject = f"Reminder: bill awaiting your approval — {task_title}"
+    pending_note = (
+        f"This bill has been waiting for your approval for {days_pending} day{'s' if days_pending != 1 else ''} now."
+        if days_pending > 0 else "This bill is still waiting for your approval."
+    )
+    html = f"""
+    <div style="font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif; max-width: 600px; margin: 0 auto; padding: 40px 20px;">
+        <div style="text-align: center; margin-bottom: 30px;">
+            <img src="https://litigationspace.com/logo.png" alt="LitigationSpace" style="height: 36px; display: inline-block;" />
+            <p style="color: #64748b; font-size: 14px; margin-top: 4px;">Reminder — Billing Approval Pending</p>
+        </div>
+        <div style="background: #f8fafc; border: 1px solid #e2e8f0; border-radius: 12px; padding: 32px;">
+            <h2 style="color: #1e293b; font-size: 20px; margin-top: 0;">Still waiting on your approval</h2>
+            <p style="color: #475569; line-height: 1.6;">Hi {client_name},</p>
+            <p style="color: #475569; line-height: 1.6;">Just a reminder from {sender_name} — this bill can't be invoiced until it's approved. {pending_note}</p>
+            <div style="background: #fef3c7; border: 1px solid #fbbf24; border-radius: 8px; padding: 16px; margin: 20px 0;">
+                <p style="color: #92400e; font-size: 13px; margin: 0 0 6px 0; text-transform: uppercase; letter-spacing: 0.05em;">For: {entity_name}</p>
+                <p style="color: #92400e; font-size: 15px; margin: 0; font-weight: 600;">{task_title}</p>
+                <p style="color: #92400e; font-size: 20px; margin: 8px 0 0 0; font-weight: 700;">${amount:,.2f}</p>
+            </div>
+            <div style="text-align: center; margin: 30px 0;">
+                <a href="{approval_url}" style="display: inline-block; background-color: #d97706; background: linear-gradient(135deg, #f59e0b, #d97706); color: #ffffff; text-decoration: none; padding: 14px 32px; border-radius: 8px; font-weight: 600; font-size: 16px;">Review &amp; Approve Bill</a>
+            </div>
+            <p style="color: #94a3b8; font-size: 13px;">This exact amount, once approved, will be included on your next invoice. Your decision and timestamp are recorded.</p>
+            <p style="color: #94a3b8; font-size: 12px; margin-top: 20px; word-break: break-all;">Or copy this link: {approval_url}</p>
+        </div>
+        <p style="color: #94a3b8; font-size: 12px; text-align: center; margin-top: 20px;">&copy; 2026 LitigationSpace. All rights reserved.</p>
+    </div>
+    """
+    return _send_email(to_email, subject, html, sender=SMTP_FROM_BILLING)
+
+
 def send_campaign_approval_email(to_email, approver_name: str, sender_name: str,
                                   case_title: str, campaign_type_label: str,
                                   recipient_names: str, step_count: int,

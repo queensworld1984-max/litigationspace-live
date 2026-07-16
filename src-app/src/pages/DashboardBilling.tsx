@@ -78,6 +78,8 @@ interface BillableTaskRow {
   contract_title?: string
   client_name?: string
   client_email?: string
+  scope_reminder_count?: number
+  billing_reminder_count?: number
 }
 
 /** Parse "Task Title (2026-06-01)" → { name, date } for backward compat */
@@ -1299,7 +1301,7 @@ function StatusBadge({ status }: { status?: string }) {
 type BtTab = 'add' | 'unbilled' | 'invoice' | 'edit'
 
 interface BtContract { id: string; title?: string; client_name?: string; client_email?: string; unbilled_task_count?: number; invoice_count?: number; total_task_count?: number; hourly_rate?: number; rate_locked?: number }
-interface BtTask { id: string; title: string; billing_type: string; flat_fee_amount?: number; hourly_rate?: number; estimated_hours?: number; task_date?: string; target_end_date?: string; description?: string; entity_name?: string; scope_status?: string; scope_query_note?: string; scope_rejected_reason?: string; billing_status?: string; billing_amount?: number }
+interface BtTask { id: string; title: string; billing_type: string; flat_fee_amount?: number; hourly_rate?: number; estimated_hours?: number; task_date?: string; target_end_date?: string; description?: string; entity_name?: string; scope_status?: string; scope_query_note?: string; scope_rejected_reason?: string; billing_status?: string; billing_amount?: number; scope_reminder_count?: number; billing_reminder_count?: number }
 interface BtEntry { id: string; description?: string; duration_minutes?: number; hourly_rate?: number; amount?: number; start_time?: string }
 
 interface BillableTaskModalProps { onClose: () => void }
@@ -1612,6 +1614,28 @@ function BillableTaskModal({ onClose }: BillableTaskModalProps) {
         if (contract) { setTaskCache(prev => { const n = { ...prev }; delete n[contract.id]; return n }); fetchTasks(contract.id) }
       })
       .catch(() => { setApprovalBusyId(null); setApprovalMsg(p => ({ ...p, [taskId]: '✕ Failed to send — try again' })) })
+  }
+
+  const doRemindScope = (taskId: string) => {
+    setApprovalBusyId(taskId)
+    apiFetch(`/api/v1/billing/tasks/${taskId}/scope/remind`, { method: 'POST' })
+      .then(d => {
+        setApprovalBusyId(null)
+        setApprovalMsg(p => ({ ...p, [taskId]: d.detail ? `✕ ${d.detail}` : '✓ Reminder sent' }))
+        if (contract) { setTaskCache(prev => { const n = { ...prev }; delete n[contract.id]; return n }); fetchTasks(contract.id) }
+      })
+      .catch(() => { setApprovalBusyId(null); setApprovalMsg(p => ({ ...p, [taskId]: '✕ Failed to send reminder' })) })
+  }
+
+  const doRemindBilling = (taskId: string) => {
+    setApprovalBusyId(taskId)
+    apiFetch(`/api/v1/billing/tasks/${taskId}/billing/remind`, { method: 'POST' })
+      .then(d => {
+        setApprovalBusyId(null)
+        setApprovalMsg(p => ({ ...p, [taskId]: d.detail ? `✕ ${d.detail}` : '✓ Reminder sent' }))
+        if (contract) { setTaskCache(prev => { const n = { ...prev }; delete n[contract.id]; return n }); fetchTasks(contract.id) }
+      })
+      .catch(() => { setApprovalBusyId(null); setApprovalMsg(p => ({ ...p, [taskId]: '✕ Failed to send reminder' })) })
   }
 
   const lineItems = (useSelection = true) => {
@@ -2124,6 +2148,18 @@ function BillableTaskModal({ onClose }: BillableTaskModalProps) {
                                     <button onClick={() => doSendBilling(t.id)} disabled={approvalBusyId === t.id}
                                       style={{ background: 'rgba(217,119,6,0.15)', border: '1px solid rgba(217,119,6,0.35)', color: '#fbbf24', borderRadius: 6, padding: '2px 8px', fontSize: '0.7rem', fontWeight: 700, cursor: 'pointer', opacity: approvalBusyId === t.id ? 0.5 : 1 }}>
                                       Send Bill for Approval
+                                    </button>
+                                  )}
+                                  {t.scope_status === 'sent' && (
+                                    <button onClick={() => doRemindScope(t.id)} disabled={approvalBusyId === t.id}
+                                      style={{ background: 'rgba(251,191,36,0.15)', border: '1px solid rgba(251,191,36,0.35)', color: '#fbbf24', borderRadius: 6, padding: '2px 8px', fontSize: '0.7rem', fontWeight: 700, cursor: 'pointer', opacity: approvalBusyId === t.id ? 0.5 : 1 }}>
+                                      🔔 Remind (Scope){t.scope_reminder_count ? ` · ${t.scope_reminder_count}` : ''}
+                                    </button>
+                                  )}
+                                  {t.billing_status === 'sent' && (
+                                    <button onClick={() => doRemindBilling(t.id)} disabled={approvalBusyId === t.id}
+                                      style={{ background: 'rgba(251,191,36,0.15)', border: '1px solid rgba(251,191,36,0.35)', color: '#fbbf24', borderRadius: 6, padding: '2px 8px', fontSize: '0.7rem', fontWeight: 700, cursor: 'pointer', opacity: approvalBusyId === t.id ? 0.5 : 1 }}>
+                                      🔔 Remind (Bill){t.billing_reminder_count ? ` · ${t.billing_reminder_count}` : ''}
                                     </button>
                                   )}
                                   {approvalMsg[t.id] && <span style={{ fontSize: '0.7rem', color: approvalMsg[t.id].startsWith('✓') ? '#34d399' : '#f87171' }}>{approvalMsg[t.id]}</span>}
@@ -2640,6 +2676,34 @@ export default function DashboardBilling() {
       const detail = (err as { response?: { data?: { detail?: string } } })?.response?.data?.detail
       setAddInvoiceMsg(p => ({ ...p, [t.id]: detail || 'Failed to add to invoice' }))
     } finally { setAddInvoiceBusyId(null) }
+  }
+
+  // ── Remind: nudge a supervisor who hasn't acted on a pending scope/billing approval ─
+  const [remindBusyId, setRemindBusyId] = useState<string | null>(null)
+  const [remindMsg, setRemindMsg] = useState<Record<string, string>>({})
+
+  const remindScopeNow = async (t: BillableTaskRow) => {
+    setRemindBusyId(t.id)
+    try {
+      await billingAPI.remindScopeApproval(t.id)
+      setRemindMsg(p => ({ ...p, [t.id]: '✓ Reminder sent' }))
+      fetchBillableTasks()
+    } catch (err: unknown) {
+      const detail = (err as { response?: { data?: { detail?: string } } })?.response?.data?.detail
+      setRemindMsg(p => ({ ...p, [t.id]: detail || 'Failed to send reminder' }))
+    } finally { setRemindBusyId(null) }
+  }
+
+  const remindBillingNow = async (t: BillableTaskRow) => {
+    setRemindBusyId(t.id)
+    try {
+      await billingAPI.remindBillingApproval(t.id)
+      setRemindMsg(p => ({ ...p, [t.id]: '✓ Reminder sent' }))
+      fetchBillableTasks()
+    } catch (err: unknown) {
+      const detail = (err as { response?: { data?: { detail?: string } } })?.response?.data?.detail
+      setRemindMsg(p => ({ ...p, [t.id]: detail || 'Failed to send reminder' }))
+    } finally { setRemindBusyId(null) }
   }
 
   // ── Delete a billable task — allowed at any approval stage ───────────────────
@@ -3571,9 +3635,28 @@ export default function DashboardBilling() {
                               onClick={() => openSendApproval(t)}
                               style={{ padding: '6px 12px', borderRadius: 6, border: 'none', background: needsBilling ? 'linear-gradient(135deg,#f59e0b,#d97706)' : 'linear-gradient(135deg,#3b82f6,#2563eb)', color: needsBilling ? '#000' : '#fff', fontSize: 11, fontWeight: 800, cursor: 'pointer' }}
                             >
-                              Send for Approval
+                              {t.scope_status === 'sent' ? 'Resend' : 'Send for Approval'}
                             </button>
                           )}
+                          {!fullyApproved && t.scope_status === 'sent' && (
+                            <button
+                              onClick={() => remindScopeNow(t)}
+                              disabled={remindBusyId === t.id}
+                              style={{ padding: '6px 12px', borderRadius: 6, border: '1px solid rgba(251,191,36,0.35)', background: 'rgba(251,191,36,0.15)', color: '#fbbf24', fontSize: 11, fontWeight: 800, cursor: 'pointer', opacity: remindBusyId === t.id ? 0.5 : 1 }}
+                            >
+                              🔔 Remind{t.scope_reminder_count ? ` · ${t.scope_reminder_count}` : ''}
+                            </button>
+                          )}
+                          {!fullyApproved && t.billing_status === 'sent' && (
+                            <button
+                              onClick={() => remindBillingNow(t)}
+                              disabled={remindBusyId === t.id}
+                              style={{ padding: '6px 12px', borderRadius: 6, border: '1px solid rgba(251,191,36,0.35)', background: 'rgba(251,191,36,0.15)', color: '#fbbf24', fontSize: 11, fontWeight: 800, cursor: 'pointer', opacity: remindBusyId === t.id ? 0.5 : 1 }}
+                            >
+                              🔔 Remind{t.billing_reminder_count ? ` · ${t.billing_reminder_count}` : ''}
+                            </button>
+                          )}
+                          {remindMsg[t.id] && <span style={{ fontSize: 10, color: remindMsg[t.id].startsWith('✓') ? '#34d399' : '#f87171', width: '100%' }}>{remindMsg[t.id]}</span>}
                           {scopeApproved && (
                             <button
                               onClick={() => { setLogTimeTarget(t); setLogTimeHours(''); setLogTimeMsg('') }}

@@ -2161,6 +2161,12 @@ def _migrate_billing_approval_columns(db):
             ("billing_summary_text", "TEXT DEFAULT ''"),  # pasted work summary included with the Gate 2 bill send
             ("scope_query_note", "TEXT"),        # client's note when sending scope back for explanation (not a rejection)
             ("scope_queried_at", "TEXT"),         # when the client sent the scope back with a question
+            ("scope_sent_at", "TEXT"),           # when the current pending scope request was sent — for "days pending" on reminders
+            ("scope_reminder_count", "INTEGER DEFAULT 0"),
+            ("scope_last_reminded_at", "TEXT"),
+            ("billing_sent_at", "TEXT"),         # when the current pending bill was sent — for "days pending" on reminders
+            ("billing_reminder_count", "INTEGER DEFAULT 0"),
+            ("billing_last_reminded_at", "TEXT"),
         ]
         for col_name, col_type in additions:
             if col_name not in cols:
