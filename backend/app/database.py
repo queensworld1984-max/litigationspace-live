@@ -1958,43 +1958,57 @@ def _migrate_billing_contingency_type(db):
     SQLite can't ALTER a CHECK constraint in place, so rebuild each table —
     preserving every column exactly as it currently exists, including ones
     added by later ALTER TABLE migrations — when the old constraint is still
-    in effect."""
-    for table, old_clause, new_clause in (
-        (
-            "contracts",
-            "CHECK(billing_type IN ('hourly', 'flat_fee', 'mixed'))",
-            "CHECK(billing_type IN ('hourly', 'flat_fee', 'mixed', 'contingency'))",
-        ),
-        (
-            "contract_tasks",
-            "CHECK(billing_type IN ('hourly', 'flat_fee'))",
-            "CHECK(billing_type IN ('hourly', 'flat_fee', 'contingency'))",
-        ),
-    ):
-        try:
-            row = db.execute(
-                "SELECT sql FROM sqlite_master WHERE type='table' AND name=?", (table,)
-            ).fetchone()
-            if not row:
-                continue  # table doesn't exist yet — the CREATE TABLE above already has the right constraint
-            old_sql = row["sql"]
-            if "'contingency'" in old_sql:
-                continue  # already migrated
-            if old_clause not in old_sql:
-                print(f"[MIGRATION WARNING] {table} billing_type CHECK not found verbatim — skipping contingency rebuild")
-                continue
-            new_sql = old_sql.replace(old_clause, new_clause)
-            cols = [c["name"] for c in db.execute(f"PRAGMA table_info({table})").fetchall()]
-            col_list = ", ".join(cols)
-            db.executescript(f"""
-                ALTER TABLE {table} RENAME TO {table}_old;
-                {new_sql};
-                INSERT INTO {table} ({col_list}) SELECT {col_list} FROM {table}_old;
-                DROP TABLE {table}_old;
-            """)
-            print(f"[MIGRATION] Rebuilt {table} to allow 'contingency' billing_type")
-        except Exception as e:
-            print(f"[MIGRATION WARNING] {table} contingency billing_type: {e}")
+    in effect.
+
+    Renaming a table makes SQLite auto-rewrite OTHER tables' FOREIGN KEY
+    clauses to point at the new (temporary) name — e.g. renaming contracts to
+    contracts_old silently rewrites contract_tasks' FK to "contracts_old",
+    which then dangles once that table is dropped. legacy_alter_table=ON
+    disables that auto-rewrite for the duration of this migration, so
+    dependent tables' FK text is left alone and correctly resolves once the
+    new table is back under its original name."""
+    try:
+        db.execute("PRAGMA foreign_keys=OFF")
+        db.execute("PRAGMA legacy_alter_table=ON")
+        for table, old_clause, new_clause in (
+            (
+                "contracts",
+                "CHECK(billing_type IN ('hourly', 'flat_fee', 'mixed'))",
+                "CHECK(billing_type IN ('hourly', 'flat_fee', 'mixed', 'contingency'))",
+            ),
+            (
+                "contract_tasks",
+                "CHECK(billing_type IN ('hourly', 'flat_fee'))",
+                "CHECK(billing_type IN ('hourly', 'flat_fee', 'contingency'))",
+            ),
+        ):
+            try:
+                row = db.execute(
+                    "SELECT sql FROM sqlite_master WHERE type='table' AND name=?", (table,)
+                ).fetchone()
+                if not row:
+                    continue  # table doesn't exist yet — the CREATE TABLE above already has the right constraint
+                old_sql = row["sql"]
+                if "'contingency'" in old_sql:
+                    continue  # already migrated
+                if old_clause not in old_sql:
+                    print(f"[MIGRATION WARNING] {table} billing_type CHECK not found verbatim — skipping contingency rebuild")
+                    continue
+                new_sql = old_sql.replace(old_clause, new_clause)
+                cols = [c["name"] for c in db.execute(f"PRAGMA table_info({table})").fetchall()]
+                col_list = ", ".join(cols)
+                db.executescript(f"""
+                    ALTER TABLE {table} RENAME TO {table}_old;
+                    {new_sql};
+                    INSERT INTO {table} ({col_list}) SELECT {col_list} FROM {table}_old;
+                    DROP TABLE {table}_old;
+                """)
+                print(f"[MIGRATION] Rebuilt {table} to allow 'contingency' billing_type")
+            except Exception as e:
+                print(f"[MIGRATION WARNING] {table} contingency billing_type: {e}")
+    finally:
+        db.execute("PRAGMA legacy_alter_table=OFF")
+        db.execute("PRAGMA foreign_keys=ON")
 
 
 def _migrate_email_template_custom_plaintext_columns(db):
