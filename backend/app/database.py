@@ -928,6 +928,7 @@ def init_db():
 
         # Add task approval-gate + entity-attribution columns to billing tables
         _migrate_billing_approval_columns(db)
+        _migrate_billing_contingency_type(db)
 
         # Migrate existing legal_drafts table if needed (add new columns)
         _migrate_legal_drafts(db)
@@ -1951,6 +1952,51 @@ def _migrate_outreach_document_links_wet_sign_mode(db):
         print(f"[MIGRATION WARNING] outreach_document_links wet_sign mode: {e}")
 
 
+def _migrate_billing_contingency_type(db):
+    """'contingency' (fee = recovery_amount x contingency_percentage) wasn't in
+    the original billing_type CHECK constraints on contracts/contract_tasks.
+    SQLite can't ALTER a CHECK constraint in place, so rebuild each table —
+    preserving every column exactly as it currently exists, including ones
+    added by later ALTER TABLE migrations — when the old constraint is still
+    in effect."""
+    for table, old_clause, new_clause in (
+        (
+            "contracts",
+            "CHECK(billing_type IN ('hourly', 'flat_fee', 'mixed'))",
+            "CHECK(billing_type IN ('hourly', 'flat_fee', 'mixed', 'contingency'))",
+        ),
+        (
+            "contract_tasks",
+            "CHECK(billing_type IN ('hourly', 'flat_fee'))",
+            "CHECK(billing_type IN ('hourly', 'flat_fee', 'contingency'))",
+        ),
+    ):
+        try:
+            row = db.execute(
+                "SELECT sql FROM sqlite_master WHERE type='table' AND name=?", (table,)
+            ).fetchone()
+            if not row:
+                continue  # table doesn't exist yet — the CREATE TABLE above already has the right constraint
+            old_sql = row["sql"]
+            if "'contingency'" in old_sql:
+                continue  # already migrated
+            if old_clause not in old_sql:
+                print(f"[MIGRATION WARNING] {table} billing_type CHECK not found verbatim — skipping contingency rebuild")
+                continue
+            new_sql = old_sql.replace(old_clause, new_clause)
+            cols = [c["name"] for c in db.execute(f"PRAGMA table_info({table})").fetchall()]
+            col_list = ", ".join(cols)
+            db.executescript(f"""
+                ALTER TABLE {table} RENAME TO {table}_old;
+                {new_sql};
+                INSERT INTO {table} ({col_list}) SELECT {col_list} FROM {table}_old;
+                DROP TABLE {table}_old;
+            """)
+            print(f"[MIGRATION] Rebuilt {table} to allow 'contingency' billing_type")
+        except Exception as e:
+            print(f"[MIGRATION WARNING] {table} contingency billing_type: {e}")
+
+
 def _migrate_email_template_custom_plaintext_columns(db):
     """email_template_custom pre-existed on the live DB (created ad hoc,
     never captured in a migration here) with only a custom_html column that
@@ -2003,7 +2049,7 @@ def _create_billing_tables(db):
             created_by TEXT NOT NULL,
             title TEXT NOT NULL,
             description TEXT DEFAULT '',
-            billing_type TEXT DEFAULT 'mixed' CHECK(billing_type IN ('hourly', 'flat_fee', 'mixed')),
+            billing_type TEXT DEFAULT 'mixed' CHECK(billing_type IN ('hourly', 'flat_fee', 'mixed', 'contingency')),
             hourly_rate REAL DEFAULT 0,
             max_hours_per_day REAL DEFAULT 0,
             max_hours_per_week REAL DEFAULT 0,
@@ -2019,6 +2065,7 @@ def _create_billing_tables(db):
             flat_rate_amount REAL DEFAULT 0,
             amount_paid REAL DEFAULT 0 NOT NULL,
             rate_locked INTEGER DEFAULT 0,
+            contingency_percentage REAL DEFAULT 0,
             FOREIGN KEY (tenant_id) REFERENCES tenants(id),
             FOREIGN KEY (created_by) REFERENCES users(id)
         );
@@ -2029,10 +2076,12 @@ def _create_billing_tables(db):
             tenant_id TEXT NOT NULL,
             title TEXT NOT NULL,
             description TEXT DEFAULT '',
-            billing_type TEXT DEFAULT 'flat_fee' CHECK(billing_type IN ('hourly', 'flat_fee')),
+            billing_type TEXT DEFAULT 'flat_fee' CHECK(billing_type IN ('hourly', 'flat_fee', 'contingency')),
             flat_fee_amount REAL DEFAULT 0,
             hourly_rate REAL DEFAULT 0,
             estimated_hours REAL DEFAULT 0,
+            contingency_percentage REAL DEFAULT 0,
+            recovery_amount REAL DEFAULT 0,
             status TEXT DEFAULT 'pending' CHECK(status IN ('pending', 'in_progress', 'completed')),
             case_id TEXT,
             created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
@@ -2128,6 +2177,9 @@ def _migrate_billing_approval_columns(db):
         if "rate_locked" not in cols:
             db.execute("ALTER TABLE contracts ADD COLUMN rate_locked INTEGER DEFAULT 0")
             print("[MIGRATION] Added rate_locked column to contracts table")
+        if "contingency_percentage" not in cols:
+            db.execute("ALTER TABLE contracts ADD COLUMN contingency_percentage REAL DEFAULT 0")
+            print("[MIGRATION] Added contingency_percentage column to contracts table")
     except Exception as e:
         print(f"[MIGRATION WARNING] contracts rate_locked: {e}")
 
@@ -2167,6 +2219,8 @@ def _migrate_billing_approval_columns(db):
             ("billing_sent_at", "TEXT"),         # when the current pending bill was sent — for "days pending" on reminders
             ("billing_reminder_count", "INTEGER DEFAULT 0"),
             ("billing_last_reminded_at", "TEXT"),
+            ("contingency_percentage", "REAL DEFAULT 0"),  # e.g. 33.33 meaning 33.33% of recovery_amount
+            ("recovery_amount", "REAL DEFAULT 0"),  # settlement/judgment amount — entered once known, drives the contingency fee
         ]
         for col_name, col_type in additions:
             if col_name not in cols:

@@ -28,7 +28,10 @@ interface BillDetail {
   task_id: string
   title: string
   entity_name?: string
+  billing_type?: string
   hourly_rate?: number
+  contingency_percentage?: number
+  recovery_amount?: number
   amount?: number
   status: string
   requested_by?: string
@@ -124,6 +127,11 @@ export default function ApproveBilling() {
             )}
             <h2 style={{ margin: '0 0 6px', fontSize: 19, fontWeight: 800, color: C.bodyText }}>{data.title}</h2>
             {!!data.hourly_rate && <p style={{ margin: '0 0 16px', fontSize: 14, color: '#374151' }}>Rate: {fmt$(data.hourly_rate)}/hr</p>}
+            {data.billing_type === 'contingency' && (
+              <p style={{ margin: '0 0 16px', fontSize: 14, color: '#374151' }}>
+                Fee: {(data.contingency_percentage ?? 0).toFixed(2)}% of {fmt$(data.recovery_amount ?? 0)} recovery
+              </p>
+            )}
 
             <div style={{ display: 'flex', flexWrap: 'wrap', gap: 16, marginBottom: 20, padding: '12px 16px', background: '#f8fafc', borderRadius: 8, border: `1px solid ${C.border}` }}>
               {data.requested_by && (

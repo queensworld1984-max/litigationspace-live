@@ -21,6 +21,7 @@ const lbl: React.CSSProperties = {
 interface BillingContract {
   id: string; title: string; client_name: string; client_email?: string
   billing_type: string; hourly_rate?: number; flat_rate_amount?: number
+  contingency_percentage?: number
   amount_paid?: number; status: string; description?: string; notes?: string
   payment_link?: string; start_date?: string; end_date?: string; created_at: string
   rate_locked?: number
@@ -33,6 +34,7 @@ interface BillingTask {
   id: string; title: string; description?: string; entity_name?: string
   billing_type: string; flat_fee_amount?: number; hourly_rate?: number
   estimated_hours?: number; task_date?: string; target_end_date?: string; status: string
+  contingency_percentage?: number; recovery_amount?: number
   scope_status?: string; billing_status?: string; billing_amount?: number
   invoice_id?: string | null
   scope_reminder_count?: number; billing_reminder_count?: number
@@ -50,13 +52,13 @@ function fmtBytes(n?: number) {
 // ── Contract form shape — defined at module level to avoid re-render issues ──
 interface CtrForm {
   title: string; client_name: string; client_email: string; billing_type: string
-  hourly_rate: string; flat_rate_amount: string; description: string
+  hourly_rate: string; flat_rate_amount: string; contingency_percentage: string; description: string
   amount_paid: string; notes: string; payment_link: string
   start_date: string; end_date: string
 }
 const EMPTY_CTR: CtrForm = {
   title: '', client_name: '', client_email: '', billing_type: 'mixed',
-  hourly_rate: '0', flat_rate_amount: '0', description: '', amount_paid: '0',
+  hourly_rate: '0', flat_rate_amount: '0', contingency_percentage: '0', description: '', amount_paid: '0',
   notes: '', payment_link: '', start_date: '', end_date: '',
 }
 
@@ -108,6 +110,7 @@ function ContractFields({ form, set }: { form: CtrForm; set: React.Dispatch<Reac
             <option value="hourly">Hourly</option>
             <option value="flat_fee">Flat Fee</option>
             <option value="mixed">Mixed (Flat + Hourly)</option>
+            <option value="contingency">Contingency</option>
           </select>
         </Field>
       </div>
@@ -120,14 +123,19 @@ function ContractFields({ form, set }: { form: CtrForm; set: React.Dispatch<Reac
         </Field>
       </div>
       <div style={{ display: 'grid', gridTemplateColumns: form.billing_type === 'mixed' ? '1fr 1fr' : '1fr', gap: 10 }}>
-        {form.billing_type !== 'hourly' && (
+        {form.billing_type !== 'hourly' && form.billing_type !== 'contingency' && (
           <Field label={form.billing_type === 'flat_fee' ? 'Flat Fee Amount ($) *' : 'Flat Fee Component ($)'}>
             <input style={inp} type="number" min="0" value={form.flat_rate_amount} onChange={e => set(p => ({ ...p, flat_rate_amount: e.target.value }))} placeholder="5000" />
           </Field>
         )}
-        {form.billing_type !== 'flat_fee' && (
+        {form.billing_type !== 'flat_fee' && form.billing_type !== 'contingency' && (
           <Field label="Hourly Rate ($/hr)">
             <input style={inp} type="number" min="0" value={form.hourly_rate} onChange={e => set(p => ({ ...p, hourly_rate: e.target.value }))} placeholder="0" />
+          </Field>
+        )}
+        {form.billing_type === 'contingency' && (
+          <Field label="Contingency Fee (%) *">
+            <input style={inp} type="number" min="0" max="100" step="0.01" value={form.contingency_percentage} onChange={e => set(p => ({ ...p, contingency_percentage: e.target.value }))} placeholder="33.33" />
           </Field>
         )}
       </div>
@@ -198,7 +206,7 @@ export default function CaseBilling({ caseId }: { caseId: string }) {
 
   // ── Billable tasks (per contract) ───────────────────────────────────────────
   const [tasksByContract, setTasksByContract] = useState<Record<string, BillingTask[]>>({})
-  const EMPTY_TASK = { contract_id: '', title: '', entity_name: '', billing_type: 'hourly', hourly_rate: '', flat_fee_amount: '', estimated_hours: '', description: '', task_date: todayStr(), target_end_date: '' }
+  const EMPTY_TASK = { contract_id: '', title: '', entity_name: '', billing_type: 'hourly', hourly_rate: '', flat_fee_amount: '', estimated_hours: '', contingency_percentage: '', recovery_amount: '', description: '', task_date: todayStr(), target_end_date: '' }
   const [taskForm,   setTaskForm]   = useState({ ...EMPTY_TASK })
   const [taskSaving, setTaskSaving] = useState(false)
   const [taskMsg,    setTaskMsg]    = useState<{ ok: boolean; text: string } | null>(null)
@@ -257,6 +265,7 @@ export default function CaseBilling({ caseId }: { caseId: string }) {
         client_email: cForm.client_email.trim(), billing_type: cForm.billing_type,
         hourly_rate: parseFloat(cForm.hourly_rate) || 0,
         flat_rate_amount: parseFloat(cForm.flat_rate_amount) || 0,
+        contingency_percentage: parseFloat(cForm.contingency_percentage) || 0,
         description: cForm.description.trim(), notes: cForm.notes.trim(),
         payment_link: cForm.payment_link.trim(),
         start_date: cForm.start_date || null, end_date: cForm.end_date || null,
@@ -272,7 +281,8 @@ export default function CaseBilling({ caseId }: { caseId: string }) {
     setECtForm({
       title: c.title, client_name: c.client_name, client_email: c.client_email ?? '',
       billing_type: c.billing_type, hourly_rate: String(c.hourly_rate ?? 0),
-      flat_rate_amount: String(c.flat_rate_amount ?? 0), description: c.description ?? '',
+      flat_rate_amount: String(c.flat_rate_amount ?? 0),
+      contingency_percentage: String(c.contingency_percentage ?? 0), description: c.description ?? '',
       notes: c.notes ?? '', payment_link: c.payment_link ?? '',
       start_date: c.start_date?.slice(0, 10) ?? '', end_date: c.end_date?.slice(0, 10) ?? '',
       amount_paid: String(c.amount_paid ?? 0),
@@ -289,6 +299,7 @@ export default function CaseBilling({ caseId }: { caseId: string }) {
         client_email: eCtForm.client_email.trim(), billing_type: eCtForm.billing_type,
         hourly_rate: parseFloat(eCtForm.hourly_rate) || 0,
         flat_rate_amount: parseFloat(eCtForm.flat_rate_amount) || 0,
+        contingency_percentage: parseFloat(eCtForm.contingency_percentage) || 0,
         description: eCtForm.description.trim(), notes: eCtForm.notes.trim(),
         payment_link: eCtForm.payment_link.trim(),
         start_date: eCtForm.start_date || null, end_date: eCtForm.end_date || null,
@@ -402,6 +413,8 @@ export default function CaseBilling({ caseId }: { caseId: string }) {
         flat_fee_amount: parseFloat(taskForm.flat_fee_amount) || 0,
         hourly_rate: rateLocked ? undefined : (parseFloat(taskForm.hourly_rate) || undefined),
         estimated_hours: parseFloat(taskForm.estimated_hours) || 0,
+        contingency_percentage: parseFloat(taskForm.contingency_percentage) || undefined,
+        recovery_amount: parseFloat(taskForm.recovery_amount) || 0,
         task_date: taskForm.task_date || todayStr(),
         target_end_date: taskForm.target_end_date || undefined,
       })
@@ -528,8 +541,9 @@ export default function CaseBilling({ caseId }: { caseId: string }) {
   }
 
   function rateInfo(c: BillingContract) {
-    if (c.billing_type === 'flat_fee') return `Flat: ${fmtMoney(c.flat_rate_amount ?? 0)}`
-    if (c.billing_type === 'mixed')    return `Mixed · Flat: ${fmtMoney(c.flat_rate_amount ?? 0)}${c.hourly_rate ? ` + $${c.hourly_rate}/hr` : ''}`
+    if (c.billing_type === 'flat_fee')    return `Flat: ${fmtMoney(c.flat_rate_amount ?? 0)}`
+    if (c.billing_type === 'mixed')       return `Mixed · Flat: ${fmtMoney(c.flat_rate_amount ?? 0)}${c.hourly_rate ? ` + $${c.hourly_rate}/hr` : ''}`
+    if (c.billing_type === 'contingency') return `${(c.contingency_percentage ?? 0)}% contingency`
     return c.hourly_rate ? `$${c.hourly_rate}/hr` : ''
   }
 
@@ -618,7 +632,9 @@ export default function CaseBilling({ caseId }: { caseId: string }) {
                     ) : (
                       <div style={{ display: 'flex', flexDirection: 'column', gap: 6 }}>
                         {(tasksByContract[c.id] ?? []).map(t => {
-                          const amt = t.billing_type === 'flat_fee' ? (t.flat_fee_amount || 0) : (t.estimated_hours || 0) * (t.hourly_rate || 0)
+                          const amt = t.billing_type === 'flat_fee' ? (t.flat_fee_amount || 0)
+                            : t.billing_type === 'contingency' ? (t.recovery_amount || 0) * (t.contingency_percentage || 0) / 100
+                            : (t.estimated_hours || 0) * (t.hourly_rate || 0)
                           const needsScope = !t.scope_status || t.scope_status === 'pending' || t.scope_status === 'rejected'
                           const needsBilling = t.scope_status === 'approved' && (!t.billing_status || t.billing_status === 'pending' || t.billing_status === 'rejected')
                           const scopeAwaiting = t.scope_status === 'sent'
@@ -633,7 +649,9 @@ export default function CaseBilling({ caseId }: { caseId: string }) {
                                   </div>
                                   <div style={{ fontSize: '0.7rem', color: T3 }}>
                                     {t.task_date ? t.task_date + ' · ' : ''}
-                                    {t.billing_type === 'flat_fee' ? `Flat ${fmtMoney(t.flat_fee_amount || 0)}` : `${t.estimated_hours || 0}h @ $${t.hourly_rate || 0}/hr`}
+                                    {t.billing_type === 'flat_fee' ? `Flat ${fmtMoney(t.flat_fee_amount || 0)}`
+                                      : t.billing_type === 'contingency' ? `${t.contingency_percentage || 0}% of ${fmtMoney(t.recovery_amount || 0)}`
+                                      : `${t.estimated_hours || 0}h @ $${t.hourly_rate || 0}/hr`}
                                   </div>
                                 </div>
                                 <div style={{ display: 'flex', alignItems: 'center', gap: 6, flexShrink: 0 }}>
@@ -948,6 +966,7 @@ export default function CaseBilling({ caseId }: { caseId: string }) {
                   <select style={inp} value={taskForm.billing_type} onChange={e => setTaskForm(p => ({ ...p, billing_type: e.target.value }))}>
                     <option value="hourly">Hourly</option>
                     <option value="flat_fee">Flat Fee</option>
+                    <option value="contingency">Contingency</option>
                   </select>
                 </Field>
                 <Field label="Start Date">
@@ -961,6 +980,15 @@ export default function CaseBilling({ caseId }: { caseId: string }) {
                 <Field label="Flat Fee Amount ($)">
                   <input style={inp} type="number" min="0" step="0.01" value={taskForm.flat_fee_amount} onChange={e => setTaskForm(p => ({ ...p, flat_fee_amount: e.target.value }))} placeholder="500.00" />
                 </Field>
+              ) : taskForm.billing_type === 'contingency' ? (
+                <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: 10 }}>
+                  <Field label="Contingency Fee (%)">
+                    <input style={inp} type="number" min="0" max="100" step="0.01" value={taskForm.contingency_percentage} onChange={e => setTaskForm(p => ({ ...p, contingency_percentage: e.target.value }))} placeholder={ctr?.contingency_percentage ? String(ctr.contingency_percentage) : '33.33'} />
+                  </Field>
+                  <Field label="Recovery / Settlement ($)">
+                    <input style={inp} type="number" min="0" step="0.01" value={taskForm.recovery_amount} onChange={e => setTaskForm(p => ({ ...p, recovery_amount: e.target.value }))} placeholder="0.00 (once known)" />
+                  </Field>
+                </div>
               ) : (
                 <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: 10 }}>
                   <Field label={`Hourly Rate ($/hr)${rateLocked ? ' — locked' : ''}`}>

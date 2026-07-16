@@ -30,6 +30,7 @@ interface ContractExt extends Contract {
   duration_minutes?: number
   billing_type?: string
   flat_rate_amount?: number
+  contingency_percentage?: number
   payment_link?: string
   unbilled_task_count?: number
   total_task_count?: number
@@ -68,6 +69,8 @@ interface BillableTaskRow {
   hourly_rate?: number
   estimated_hours?: number
   flat_fee_amount?: number
+  contingency_percentage?: number
+  recovery_amount?: number
   scope_status?: string
   scope_query_note?: string
   scope_rejected_reason?: string
@@ -118,6 +121,7 @@ interface CtrForm {
   billing_type: string
   hourly_rate: string
   flat_rate_amount: string
+  contingency_percentage: string
   description: string
   notes: string
   payment_link: string
@@ -127,7 +131,7 @@ interface CtrForm {
 }
 const EMPTY_CTR: CtrForm = {
   title: '', client_name: '', client_email: '',
-  billing_type: 'hourly', hourly_rate: '', flat_rate_amount: '',
+  billing_type: 'hourly', hourly_rate: '', flat_rate_amount: '', contingency_percentage: '',
   description: '', notes: '', payment_link: '',
   start_date: todayStr(), end_date: '', rate_locked: false,
 }
@@ -721,6 +725,7 @@ function NewContractModal({ form, set, saving, error, onClose, onSave }: NewCont
             <select {...bind('billing_type')} style={{ ...f, cursor: 'pointer' }}>
               <option value="hourly">Hourly Rate</option>
               <option value="flat_fee">Flat Fee</option>
+              <option value="contingency">Contingency</option>
             </select>
           </div>
 
@@ -730,6 +735,11 @@ function NewContractModal({ form, set, saving, error, onClose, onSave }: NewCont
               <div>
                 <label style={lbl}>Hourly Rate ($)</label>
                 <input type="number" min="0" step="0.01" {...bind('hourly_rate')} placeholder="0.00" />
+              </div>
+            ) : form.billing_type === 'contingency' ? (
+              <div>
+                <label style={lbl}>Contingency Fee (%)</label>
+                <input type="number" min="0" max="100" step="0.01" {...bind('contingency_percentage')} placeholder="33.33" />
               </div>
             ) : (
               <div>
@@ -904,10 +914,12 @@ function InvoiceModal({ contracts, entries, form, set, saving, error, editMode, 
     return tasks.map(t => ({
       ctrTitle: cName,
       desc:     t.title + (t.task_date ? ` (${t.task_date})` : ''),
-      qty:      t.billing_type === 'flat_fee' ? 1 : (t.estimated_hours || 0),
-      rate:     t.billing_type === 'flat_fee' ? (t.flat_fee_amount || 0) : (t.hourly_rate || 0),
-      amt:      t.billing_type === 'flat_fee' ? (t.flat_fee_amount || 0) : (t.estimated_hours || 0) * (t.hourly_rate || 0),
-      isFlat:   t.billing_type === 'flat_fee',
+      qty:      t.billing_type === 'hourly' ? (t.estimated_hours || 0) : 1,
+      rate:     t.billing_type === 'flat_fee' ? (t.flat_fee_amount || 0)
+                  : t.billing_type === 'contingency' ? (t.recovery_amount || 0) * (t.contingency_percentage || 0) / 100
+                  : (t.hourly_rate || 0),
+      amt:      t.billing_type === 'flat_fee' ? (t.flat_fee_amount || 0) : t.billing_type === 'contingency' ? (t.recovery_amount || 0) * (t.contingency_percentage || 0) / 100 : (t.estimated_hours || 0) * (t.hourly_rate || 0),
+      isFlat:   t.billing_type !== 'hourly',
       task_id:  t.id,
     }))
   })
@@ -1029,7 +1041,7 @@ function InvoiceModal({ contracts, entries, form, set, saving, error, editMode, 
                   const unbilled  = c.unbilled_task_count || 0
                   const selCount  = cTasks.filter(t => invSelIds.has(t.id)).length
                   const cSubtotal = cTasks.filter(t => invSelIds.has(t.id)).reduce((s, t) =>
-                    s + (t.billing_type === 'flat_fee' ? (t.flat_fee_amount || 0) : (t.estimated_hours || 0) * (t.hourly_rate || 0)), 0)
+                    s + (t.billing_type === 'flat_fee' ? (t.flat_fee_amount || 0) : t.billing_type === 'contingency' ? (t.recovery_amount || 0) * (t.contingency_percentage || 0) / 100 : (t.estimated_hours || 0) * (t.hourly_rate || 0)), 0)
                   const allCtrSel = cTasks.length > 0 && cTasks.every(t => invSelIds.has(t.id))
                   return (
                     <div key={c.id}>
@@ -1075,8 +1087,8 @@ function InvoiceModal({ contracts, entries, form, set, saving, error, editMode, 
                           )}
                           {!cLoading && cTasks.map((t, ti) => {
                             const tSel = invSelIds.has(t.id)
-                            const tAmt = t.billing_type === 'flat_fee' ? (t.flat_fee_amount || 0) : (t.estimated_hours || 0) * (t.hourly_rate || 0)
-                            const tRate = t.billing_type === 'flat_fee' ? 'Flat fee' : `${t.estimated_hours || 0}h × $${t.hourly_rate || 0}/hr`
+                            const tAmt = t.billing_type === 'flat_fee' ? (t.flat_fee_amount || 0) : t.billing_type === 'contingency' ? (t.recovery_amount || 0) * (t.contingency_percentage || 0) / 100 : (t.estimated_hours || 0) * (t.hourly_rate || 0)
+                            const tRate = t.billing_type === 'flat_fee' ? 'Flat fee' : t.billing_type === 'contingency' ? `${t.contingency_percentage || 0}% contingency` : `${t.estimated_hours || 0}h × $${t.hourly_rate || 0}/hr`
                             return (
                               <div
                                 key={t.id}
@@ -1300,13 +1312,13 @@ function StatusBadge({ status }: { status?: string }) {
 
 type BtTab = 'add' | 'unbilled' | 'invoice' | 'edit'
 
-interface BtContract { id: string; title?: string; client_name?: string; client_email?: string; unbilled_task_count?: number; invoice_count?: number; total_task_count?: number; hourly_rate?: number; rate_locked?: number }
-interface BtTask { id: string; title: string; billing_type: string; flat_fee_amount?: number; hourly_rate?: number; estimated_hours?: number; task_date?: string; target_end_date?: string; description?: string; entity_name?: string; scope_status?: string; scope_query_note?: string; scope_rejected_reason?: string; billing_status?: string; billing_amount?: number; scope_reminder_count?: number; billing_reminder_count?: number }
+interface BtContract { id: string; title?: string; client_name?: string; client_email?: string; unbilled_task_count?: number; invoice_count?: number; total_task_count?: number; hourly_rate?: number; rate_locked?: number; contingency_percentage?: number }
+interface BtTask { id: string; title: string; billing_type: string; flat_fee_amount?: number; hourly_rate?: number; estimated_hours?: number; task_date?: string; target_end_date?: string; description?: string; entity_name?: string; scope_status?: string; scope_query_note?: string; scope_rejected_reason?: string; billing_status?: string; billing_amount?: number; scope_reminder_count?: number; billing_reminder_count?: number; contingency_percentage?: number; recovery_amount?: number }
 interface BtEntry { id: string; description?: string; duration_minutes?: number; hourly_rate?: number; amount?: number; start_time?: string }
 
 interface BillableTaskModalProps { onClose: () => void }
 
-const EMPTY_EDIT = { title: '', billing_type: 'flat_fee', flat_fee_amount: '', hourly_rate: '', estimated_hours: '', description: '', task_date: '', target_end_date: '', entity_name: '' }
+const EMPTY_EDIT = { title: '', billing_type: 'flat_fee', flat_fee_amount: '', hourly_rate: '', estimated_hours: '', contingency_percentage: '', recovery_amount: '', description: '', task_date: '', target_end_date: '', entity_name: '' }
 
 function BillableTaskModal({ onClose }: BillableTaskModalProps) {
   const [contracts,   setContracts]  = useState<BtContract[]>([])
@@ -1384,7 +1396,7 @@ function BillableTaskModal({ onClose }: BillableTaskModalProps) {
   const [selectedTaskIds, setSelectedTaskIds] = useState<Set<string>>(new Set())
 
   const todayVal = () => new Date().toISOString().split('T')[0]
-  const [f, setF] = useState({ title: '', billing_type: 'flat_fee', flat_fee_amount: '', hourly_rate: '', estimated_hours: '', description: '', task_date: todayVal(), target_end_date: '', entity_name: '' })
+  const [f, setF] = useState({ title: '', billing_type: 'flat_fee', flat_fee_amount: '', hourly_rate: '', estimated_hours: '', contingency_percentage: '', recovery_amount: '', description: '', task_date: todayVal(), target_end_date: '', entity_name: '' })
   const [inv, setInv] = useState({ due_date: '', notes: '', tax_rate: '0', payment_link: '', name: '', email: '' })
 
   const tok = () => { try { return localStorage.getItem('token') || '' } catch { return '' } }
@@ -1497,6 +1509,8 @@ function BillableTaskModal({ onClose }: BillableTaskModalProps) {
         flat_fee_amount: parseFloat(f.flat_fee_amount) || 0,
         hourly_rate: rateLocked ? undefined : (parseFloat(f.hourly_rate) || 0),
         estimated_hours: parseFloat(f.estimated_hours) || 0, task_date: f.task_date || todayVal(),
+        contingency_percentage: parseFloat(f.contingency_percentage) || undefined,
+        recovery_amount: parseFloat(f.recovery_amount) || 0,
         target_end_date: f.target_end_date || undefined,
       })
     }).then(d => {
@@ -1505,7 +1519,7 @@ function BillableTaskModal({ onClose }: BillableTaskModalProps) {
       else if (d.detail) { setMsg({ ok: false, text: d.detail }) }
       else {
         setMsg({ ok: true, text: `"${f.title.trim()}" added to ${contract.title || contract.client_name}.` })
-        setF(p => ({ ...p, title: '', flat_fee_amount: '', estimated_hours: '', description: '', entity_name: '', target_end_date: '' }))
+        setF(p => ({ ...p, title: '', flat_fee_amount: '', estimated_hours: '', contingency_percentage: '', recovery_amount: '', description: '', entity_name: '', target_end_date: '' }))
         // Invalidate cache for this contract so it reloads
         setTaskCache(prev => { const n = { ...prev }; delete n[contract.id]; return n })
         fetchTasks(contract.id)
@@ -1527,6 +1541,8 @@ function BillableTaskModal({ onClose }: BillableTaskModalProps) {
       flat_fee_amount:  t.flat_fee_amount != null ? String(t.flat_fee_amount) : '',
       hourly_rate:      t.hourly_rate     != null ? String(t.hourly_rate)     : '',
       estimated_hours:  t.estimated_hours != null ? String(t.estimated_hours) : '',
+      contingency_percentage: t.contingency_percentage != null ? String(t.contingency_percentage) : '',
+      recovery_amount:  t.recovery_amount != null ? String(t.recovery_amount) : '',
       description:      t.description || '',
       task_date:        t.task_date || '',
       target_end_date:  t.target_end_date || '',
@@ -1552,6 +1568,9 @@ function BillableTaskModal({ onClose }: BillableTaskModalProps) {
     }
     if (editForm.billing_type === 'flat_fee') {
       body.flat_fee_amount = parseFloat(editForm.flat_fee_amount) || 0
+    } else if (editForm.billing_type === 'contingency') {
+      body.contingency_percentage = parseFloat(editForm.contingency_percentage) || 0
+      body.recovery_amount = parseFloat(editForm.recovery_amount) || 0
     } else {
       if (!rateLocked) body.hourly_rate = parseFloat(editForm.hourly_rate) || 0
       body.estimated_hours = parseFloat(editForm.estimated_hours) || 0
@@ -1712,7 +1731,7 @@ function BillableTaskModal({ onClose }: BillableTaskModalProps) {
       }).catch(() => { setInvoicing(false); setImsg({ ok: false, text: 'Failed — please try again.' }) })
   }
 
-  const taskTotal = tasks.reduce((s, t) => s + (t.billing_type === 'flat_fee' ? (t.flat_fee_amount || 0) : (t.estimated_hours || 0) * (t.hourly_rate || 0)), 0)
+  const taskTotal = tasks.reduce((s, t) => s + (t.billing_type === 'flat_fee' ? (t.flat_fee_amount || 0) : t.billing_type === 'contingency' ? (t.recovery_amount || 0) * (t.contingency_percentage || 0) / 100 : (t.estimated_hours || 0) * (t.hourly_rate || 0)), 0)
     + btEntries.reduce((s, e) => s + (e.amount || 0), 0)
   const alreadyInvoiced = contract && (contract.invoice_count || 0) > 0 && (contract.unbilled_task_count || 0) === 0
 
@@ -1731,8 +1750,8 @@ function BillableTaskModal({ onClose }: BillableTaskModalProps) {
 
   // ── Contract task row renderer (expanded list in left panel) ────────────────
   const renderTaskRow = (t: BtTask) => {
-    const amt  = t.billing_type === 'flat_fee' ? (t.flat_fee_amount || 0) : (t.estimated_hours || 0) * (t.hourly_rate || 0)
-    const rate = t.billing_type === 'flat_fee' ? `Flat ${fmtAmt(t.flat_fee_amount || 0)}` : `${t.estimated_hours || '?'}h × ${fmtAmt(t.hourly_rate || 0)}/hr`
+    const amt  = t.billing_type === 'flat_fee' ? (t.flat_fee_amount || 0) : t.billing_type === 'contingency' ? (t.recovery_amount || 0) * (t.contingency_percentage || 0) / 100 : (t.estimated_hours || 0) * (t.hourly_rate || 0)
+    const rate = t.billing_type === 'flat_fee' ? `Flat ${fmtAmt(t.flat_fee_amount || 0)}` : t.billing_type === 'contingency' ? `${t.contingency_percentage || 0}% of ${fmtAmt(t.recovery_amount || 0)}` : `${t.estimated_hours || '?'}h × ${fmtAmt(t.hourly_rate || 0)}/hr`
     const isEditing = editingTask?.id === t.id
     // Get the parent contract for the timer
     const parentContract = contracts.find(c => c.id === expandedId) || contract
@@ -1953,6 +1972,7 @@ function BillableTaskModal({ onClose }: BillableTaskModalProps) {
                         <select style={INP} value={f.billing_type} onChange={e => setF(p => ({ ...p, billing_type: e.target.value }))}>
                           <option value="flat_fee">Flat Fee</option>
                           <option value="hourly">Hourly</option>
+                          <option value="contingency">Contingency</option>
                         </select>
                       </div>
                       <div>
@@ -1966,6 +1986,17 @@ function BillableTaskModal({ onClose }: BillableTaskModalProps) {
                           <label style={LBL}>Flat Fee Amount ($)</label>
                           <input type="number" min="0" step="0.01" style={INP} value={f.flat_fee_amount} onChange={e => setF(p => ({ ...p, flat_fee_amount: e.target.value }))} placeholder="500.00" />
                         </div>
+                      ) : f.billing_type === 'contingency' ? (
+                        <>
+                          <div>
+                            <label style={LBL}>Contingency Fee (%)</label>
+                            <input type="number" min="0" max="100" step="0.01" style={INP} value={f.contingency_percentage} onChange={e => setF(p => ({ ...p, contingency_percentage: e.target.value }))} placeholder={contract?.contingency_percentage ? String(contract.contingency_percentage) : '33.33'} />
+                          </div>
+                          <div>
+                            <label style={LBL}>Recovery / Settlement ($)</label>
+                            <input type="number" min="0" step="0.01" style={INP} value={f.recovery_amount} onChange={e => setF(p => ({ ...p, recovery_amount: e.target.value }))} placeholder="0.00 (once known)" />
+                          </div>
+                        </>
                       ) : (
                         <>
                           <div>
@@ -2099,8 +2130,8 @@ function BillableTaskModal({ onClose }: BillableTaskModalProps) {
                     ) : (
                       <>
                         {tasks.map(t => {
-                          const amt      = t.billing_type === 'flat_fee' ? (t.flat_fee_amount || 0) : (t.estimated_hours || 0) * (t.hourly_rate || 0)
-                          const rate     = t.billing_type === 'flat_fee' ? `Flat ${fmtAmt(t.flat_fee_amount || 0)}` : `${t.estimated_hours || '?'}h @ ${fmtAmt(t.hourly_rate || 0)}/hr`
+                          const amt      = t.billing_type === 'flat_fee' ? (t.flat_fee_amount || 0) : t.billing_type === 'contingency' ? (t.recovery_amount || 0) * (t.contingency_percentage || 0) / 100 : (t.estimated_hours || 0) * (t.hourly_rate || 0)
+                          const rate     = t.billing_type === 'flat_fee' ? `Flat ${fmtAmt(t.flat_fee_amount || 0)}` : t.billing_type === 'contingency' ? `${t.contingency_percentage || 0}% of ${fmtAmt(t.recovery_amount || 0)}` : `${t.estimated_hours || '?'}h @ ${fmtAmt(t.hourly_rate || 0)}/hr`
                           const isActive = editingTask?.id === t.id
                           const isMergeChecked = mergeSelected.has(t.id)
                           return (
@@ -2240,6 +2271,7 @@ function BillableTaskModal({ onClose }: BillableTaskModalProps) {
                         <select style={INP} value={editForm.billing_type} onChange={e => setEditForm(p => ({ ...p, billing_type: e.target.value }))}>
                           <option value="flat_fee">Flat Fee</option>
                           <option value="hourly">Hourly</option>
+                          <option value="contingency">Contingency</option>
                         </select>
                       </div>
                       <div>
@@ -2254,6 +2286,17 @@ function BillableTaskModal({ onClose }: BillableTaskModalProps) {
                           <label style={LBL}>Flat Fee Amount ($)</label>
                           <input type="number" min="0" step="0.01" style={INP} value={editForm.flat_fee_amount} onChange={e => setEditForm(p => ({ ...p, flat_fee_amount: e.target.value }))} placeholder="500.00" />
                         </div>
+                      ) : editForm.billing_type === 'contingency' ? (
+                        <>
+                          <div>
+                            <label style={LBL}>Contingency Fee (%)</label>
+                            <input type="number" min="0" max="100" step="0.01" style={INP} value={editForm.contingency_percentage} onChange={e => setEditForm(p => ({ ...p, contingency_percentage: e.target.value }))} placeholder="33.33" />
+                          </div>
+                          <div>
+                            <label style={LBL}>Recovery / Settlement ($)</label>
+                            <input type="number" min="0" step="0.01" style={INP} value={editForm.recovery_amount} onChange={e => setEditForm(p => ({ ...p, recovery_amount: e.target.value }))} placeholder="0.00 (once known)" />
+                          </div>
+                        </>
                       ) : (
                         <>
                           <div>
@@ -2325,9 +2368,11 @@ function BillableTaskModal({ onClose }: BillableTaskModalProps) {
                         {/* ── Task checklist ── */}
                         <div style={{ border: '1px solid #334155', borderRadius: 8, overflow: 'hidden', marginBottom: 14 }}>
                           {tasks.map((t, idx) => {
-                            const amt     = t.billing_type === 'flat_fee' ? (t.flat_fee_amount || 0) : (t.estimated_hours || 0) * (t.hourly_rate || 0)
+                            const amt     = t.billing_type === 'flat_fee' ? (t.flat_fee_amount || 0) : t.billing_type === 'contingency' ? (t.recovery_amount || 0) * (t.contingency_percentage || 0) / 100 : (t.estimated_hours || 0) * (t.hourly_rate || 0)
                             const rateStr = t.billing_type === 'flat_fee'
                               ? `Flat fee`
+                              : t.billing_type === 'contingency'
+                              ? `${t.contingency_percentage || 0}% contingency`
                               : `${t.estimated_hours || 0}h × ${fmtAmt(t.hourly_rate || 0)}/hr`
                             const checked = selectedTaskIds.has(t.id)
                             return (
@@ -2718,7 +2763,7 @@ export default function DashboardBilling() {
   }
 
   // ── Edit a billable task from the flat panel — allowed at any approval stage ─
-  const EMPTY_BT_EDIT = { title: '', entity_name: '', description: '', billing_type: 'hourly', hourly_rate: '', flat_fee_amount: '', estimated_hours: '', task_date: '', target_end_date: '' }
+  const EMPTY_BT_EDIT = { title: '', entity_name: '', description: '', billing_type: 'hourly', hourly_rate: '', flat_fee_amount: '', estimated_hours: '', contingency_percentage: '', recovery_amount: '', task_date: '', target_end_date: '' }
   const [editBtTarget, setEditBtTarget] = useState<BillableTaskRow | null>(null)
   const [editBtForm,   setEditBtForm]   = useState({ ...EMPTY_BT_EDIT })
   const [editBtSaving, setEditBtSaving] = useState(false)
@@ -2731,6 +2776,8 @@ export default function DashboardBilling() {
       billing_type: t.billing_type, hourly_rate: t.hourly_rate != null ? String(t.hourly_rate) : '',
       flat_fee_amount: t.flat_fee_amount != null ? String(t.flat_fee_amount) : '',
       estimated_hours: t.estimated_hours != null ? String(t.estimated_hours) : '',
+      contingency_percentage: t.contingency_percentage != null ? String(t.contingency_percentage) : '',
+      recovery_amount: t.recovery_amount != null ? String(t.recovery_amount) : '',
       task_date: t.task_date || '', target_end_date: t.target_end_date || '',
     })
     setEditBtMsg('')
@@ -2752,6 +2799,9 @@ export default function DashboardBilling() {
       }
       if (editBtForm.billing_type === 'flat_fee') {
         body.flat_fee_amount = parseFloat(editBtForm.flat_fee_amount) || 0
+      } else if (editBtForm.billing_type === 'contingency') {
+        body.contingency_percentage = parseFloat(editBtForm.contingency_percentage) || 0
+        body.recovery_amount = parseFloat(editBtForm.recovery_amount) || 0
       } else {
         if (!editBtContractLocked) body.hourly_rate = parseFloat(editBtForm.hourly_rate) || 0
         body.estimated_hours = parseFloat(editBtForm.estimated_hours) || 0
@@ -2911,6 +2961,7 @@ export default function DashboardBilling() {
         billing_type:     ctrForm.billing_type,
         hourly_rate:      ctrForm.billing_type === 'hourly'   ? parseFloat(ctrForm.hourly_rate || '0')    : null,
         flat_rate_amount: ctrForm.billing_type === 'flat_fee' ? parseFloat(ctrForm.flat_rate_amount || '0') : null,
+        contingency_percentage: ctrForm.billing_type === 'contingency' ? parseFloat(ctrForm.contingency_percentage || '0') : null,
         description:      ctrForm.description.trim(),
         notes:            ctrForm.notes.trim(),
         payment_link:     ctrForm.payment_link.trim(),
@@ -3356,6 +3407,17 @@ export default function DashboardBilling() {
                 <div style={{ marginBottom: 16 }}>
                   <label style={{ display: 'block', fontSize: 11, fontWeight: 700, color: T3, textTransform: 'uppercase', letterSpacing: '0.06em', marginBottom: 5 }}>Flat Fee Amount ($)</label>
                   <input type="number" min="0" step="0.01" value={editBtForm.flat_fee_amount} onChange={e => setEditBtForm(p => ({ ...p, flat_fee_amount: e.target.value }))} style={{ width: '100%', boxSizing: 'border-box', background: BG, border: `1px solid ${BD2}`, borderRadius: 8, color: T1, padding: '9px 12px', fontSize: 13, outline: 'none' }} />
+                </div>
+              ) : editBtForm.billing_type === 'contingency' ? (
+                <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: 10, marginBottom: 16 }}>
+                  <div>
+                    <label style={{ display: 'block', fontSize: 11, fontWeight: 700, color: T3, textTransform: 'uppercase', letterSpacing: '0.06em', marginBottom: 5 }}>Contingency Fee (%)</label>
+                    <input type="number" min="0" max="100" step="0.01" value={editBtForm.contingency_percentage} onChange={e => setEditBtForm(p => ({ ...p, contingency_percentage: e.target.value }))} style={{ width: '100%', boxSizing: 'border-box', background: BG, border: `1px solid ${BD2}`, borderRadius: 8, color: T1, padding: '9px 12px', fontSize: 13, outline: 'none' }} />
+                  </div>
+                  <div>
+                    <label style={{ display: 'block', fontSize: 11, fontWeight: 700, color: T3, textTransform: 'uppercase', letterSpacing: '0.06em', marginBottom: 5 }}>Recovery / Settlement ($)</label>
+                    <input type="number" min="0" step="0.01" value={editBtForm.recovery_amount} onChange={e => setEditBtForm(p => ({ ...p, recovery_amount: e.target.value }))} style={{ width: '100%', boxSizing: 'border-box', background: BG, border: `1px solid ${BD2}`, borderRadius: 8, color: T1, padding: '9px 12px', fontSize: 13, outline: 'none' }} />
+                  </div>
                 </div>
               ) : (
                 <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: 10, marginBottom: 16 }}>

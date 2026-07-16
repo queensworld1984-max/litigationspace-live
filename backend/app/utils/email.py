@@ -496,8 +496,8 @@ def send_campaign_rejected_notify_email(to_email, requester_name: str, approver_
 
 
 def send_billing_approval_email(to_email, client_name: str, sender_name: str,
-                                 task_title: str, entity_name: str, hours: float,
-                                 hourly_rate: float, amount: float,
+                                 task_title: str, entity_name: str, fee_description: str,
+                                 amount: float,
                                  approval_url: str, attachment_count: int = 0) -> tuple:
     """Send a Gate 2 billing-approval request — client approves the exact dollar
     amount for completed work before it can roll into an invoice."""
@@ -519,7 +519,7 @@ def send_billing_approval_email(to_email, client_name: str, sender_name: str,
             <div style="background: #fef3c7; border: 1px solid #fbbf24; border-radius: 8px; padding: 16px; margin: 20px 0;">
                 <p style="color: #92400e; font-size: 13px; margin: 0 0 6px 0; text-transform: uppercase; letter-spacing: 0.05em;">For: {entity_name}</p>
                 <p style="color: #92400e; font-size: 15px; margin: 0; font-weight: 600;">{task_title}</p>
-                <p style="color: #92400e; font-size: 14px; margin: 8px 0 0 0;">{hours:.2f} hours &times; ${hourly_rate:.2f}/hr</p>
+                <p style="color: #92400e; font-size: 14px; margin: 8px 0 0 0;">{fee_description}</p>
                 <p style="color: #92400e; font-size: 20px; margin: 8px 0 0 0; font-weight: 700;">${amount:,.2f}</p>
             </div>
             {attachment_note}

@@ -61,6 +61,7 @@ class ContractCreate(BaseModel):
     billing_type: str = "mixed"
     hourly_rate: Optional[float] = 0
     flat_rate_amount: Optional[float] = 0
+    contingency_percentage: Optional[float] = 0
     max_hours_per_day: Optional[float] = 0
     max_hours_per_week: Optional[float] = 0
     status: str = "active"
@@ -86,6 +87,7 @@ class ContractUpdate(BaseModel):
     notes: Optional[str] = None
     amount_paid: Optional[float] = None
     flat_rate_amount: Optional[float] = None
+    contingency_percentage: Optional[float] = None
     rate_locked: Optional[bool] = None
 
 class TaskCreate(BaseModel):
@@ -97,6 +99,8 @@ class TaskCreate(BaseModel):
     flat_fee_amount: float = 0
     hourly_rate: Optional[float] = None  # defaults to the contract's rate; ignored if the contract has rate_locked=True
     estimated_hours: float = 0
+    contingency_percentage: Optional[float] = None  # defaults to the contract's rate, e.g. 33.33 meaning 33.33%
+    recovery_amount: float = 0  # settlement/judgment amount — usually unknown at creation, edited once the case resolves
     case_id: Optional[str] = None
     task_date: Optional[str] = None  # YYYY-MM-DD; used for dedup (same title + same date = same task) — start date
     target_end_date: Optional[str] = None  # YYYY-MM-DD; expected completion date, shown to the client
@@ -111,6 +115,8 @@ class TaskUpdate(BaseModel):
     flat_fee_amount: Optional[float] = None
     hourly_rate: Optional[float] = None  # rejected if the task's contract has rate_locked=True
     estimated_hours: Optional[float] = None
+    contingency_percentage: Optional[float] = None
+    recovery_amount: Optional[float] = None
     task_date: Optional[str] = None
 
 class TimeEntryCreate(BaseModel):
@@ -221,12 +227,12 @@ async def create_contract(req: ContractCreate, current_user: dict = Depends(get_
         db.execute(
             """INSERT INTO contracts (id, tenant_id, client_user_id, client_name, client_email,
                created_by, title, description, billing_type, hourly_rate, flat_rate_amount,
-               max_hours_per_day, max_hours_per_week, status, contract_file_url,
+               contingency_percentage, max_hours_per_day, max_hours_per_week, status, contract_file_url,
                start_date, end_date, payment_link, notes, case_id, amount_paid, rate_locked, created_at, updated_at)
-               VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)""",
+               VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)""",
             (contract_id, tenant_id, req.client_user_id, req.client_name, req.client_email,
              current_user["sub"], req.title, req.description, req.billing_type,
-             req.hourly_rate or 0, req.flat_rate_amount or 0,
+             req.hourly_rate or 0, req.flat_rate_amount or 0, req.contingency_percentage or 0,
              req.max_hours_per_day or 0, req.max_hours_per_week or 0,
              req.status, req.contract_file_url,
              req.start_date, req.end_date, req.payment_link, req.notes, req.case_id or None,
@@ -336,7 +342,7 @@ async def create_task(req: TaskCreate, current_user: dict = Depends(get_current_
 
     with get_db() as db:
         contract = db.execute(
-            "SELECT id, client_name, hourly_rate, rate_locked FROM contracts WHERE id = ? AND tenant_id = ?",
+            "SELECT id, client_name, hourly_rate, rate_locked, contingency_percentage FROM contracts WHERE id = ? AND tenant_id = ?",
             (req.contract_id, tenant_id)
         ).fetchone()
         if not contract:
@@ -369,14 +375,20 @@ async def create_task(req: TaskCreate, current_user: dict = Depends(get_current_
         else:
             task_hourly_rate = req.hourly_rate if req.hourly_rate is not None else (contract["hourly_rate"] or 0)
 
+        task_contingency_percentage = (
+            req.contingency_percentage if req.contingency_percentage is not None
+            else (contract["contingency_percentage"] or 0)
+        )
+
         task_id = generate_id()
         db.execute(
             """INSERT INTO contract_tasks (id, contract_id, tenant_id, title, description, entity_name,
-               billing_type, flat_fee_amount, hourly_rate, estimated_hours, status, case_id, task_date,
-               target_end_date, created_at)
-               VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 'pending', ?, ?, ?, ?)""",
+               billing_type, flat_fee_amount, hourly_rate, estimated_hours, contingency_percentage, recovery_amount,
+               status, case_id, task_date, target_end_date, created_at)
+               VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 'pending', ?, ?, ?, ?)""",
             (task_id, req.contract_id, tenant_id, req.title, req.description, entity_name,
              req.billing_type, req.flat_fee_amount, task_hourly_rate, req.estimated_hours,
+             task_contingency_percentage, req.recovery_amount or 0,
              req.case_id, task_date, req.target_end_date, now)
         )
     return {"id": task_id, "message": "Task created", "duplicate": False}
@@ -988,9 +1000,15 @@ async def send_billing_approval(task_id: str, req: ApprovalSendRequest = Approva
                 ).fetchone()["mins"]
                 hours = round((total_minutes or 0) / 60.0, 2)
             amount = round(hours * rate, 2)
+            fee_description = f"{hours:.2f} hours &times; ${rate:.2f}/hr"
+        elif task_d.get("billing_type") == "contingency":
+            pct = task_d.get("contingency_percentage") or 0
+            recovery = task_d.get("recovery_amount") or 0
+            amount = round(recovery * pct / 100, 2)
+            fee_description = f"{pct:.2f}% of ${recovery:,.2f} recovery"
         else:
-            hours = 0
             amount = task_d.get("flat_fee_amount") or 0
+            fee_description = "Flat fee"
 
         if amount <= 0:
             raise HTTPException(status_code=400, detail="No billable time or amount logged for this task yet")
@@ -1022,8 +1040,7 @@ async def send_billing_approval(task_id: str, req: ApprovalSendRequest = Approva
             sender_name=requester_name,
             task_title=task_d["title"],
             entity_name=task_d.get("entity_name") or "",
-            hours=hours,
-            hourly_rate=rate,
+            fee_description=fee_description,
             amount=amount,
             approval_url=approval_url,
             attachment_count=attachment_count,
@@ -1123,7 +1140,10 @@ async def get_billing_for_approval(token: str):
             "task_id": task_d["id"],
             "title": task_d["title"],
             "entity_name": task_d.get("entity_name"),
+            "billing_type": task_d.get("billing_type"),
             "hourly_rate": task_d.get("hourly_rate"),
+            "contingency_percentage": task_d.get("contingency_percentage"),
+            "recovery_amount": task_d.get("recovery_amount"),
             "amount": task_d.get("billing_amount"),
             "status": task_d["billing_status"],
             "requested_by": task_d.get("billing_requested_by"),
@@ -1191,7 +1211,10 @@ async def get_unbilled_tasks(contract_id: str, current_user: dict = Depends(get_
         "summary": {
             "task_count": len(tasks),
             "time_entry_count": len(time_entries),
-            "task_total": sum(t["flat_fee_amount"] for t in tasks if t["billing_type"] == "flat_fee"),
+            "task_total": (
+                sum(t["flat_fee_amount"] for t in tasks if t["billing_type"] == "flat_fee")
+                + sum((t["recovery_amount"] or 0) * (t["contingency_percentage"] or 0) / 100 for t in tasks if t["billing_type"] == "contingency")
+            ),
             "time_total": sum(e["amount"] for e in time_entries),
         }
     }
@@ -1704,6 +1727,13 @@ def generate_weekly_invoices(tenant_id: Optional[str] = None) -> list:
                     rate = t_d.get("hourly_rate") or 0
                     amount = t_d.get("billing_amount") or 0
                     qty = round(amount / rate, 2) if rate else 0
+                elif t_d.get("billing_type") == "contingency":
+                    # The dollar amount was locked in at Gate 2 approval time
+                    # (recovery_amount x contingency_percentage as of that send) —
+                    # use that, not a live recompute, same as hourly's billing_amount.
+                    rate = 0
+                    qty = 1
+                    amount = t_d.get("billing_amount") or 0
                 else:
                     rate = 0
                     qty = 1
@@ -1822,6 +1852,10 @@ async def add_task_to_invoice(task_id: str, current_user: dict = Depends(get_cur
             rate = task_d.get("hourly_rate") or 0
             amount = task_d.get("billing_amount") or 0
             qty = round(amount / rate, 2) if rate else 0
+        elif task_d.get("billing_type") == "contingency":
+            rate = 0
+            qty = 1
+            amount = task_d.get("billing_amount") or 0
         else:
             rate = 0
             qty = 1
@@ -2330,6 +2364,12 @@ async def get_earnings(current_user: dict = Depends(get_current_user)):
             (tenant_id,)
         ).fetchone()["total"]
 
+        # Contingency fee earnings from completed tasks (recovery_amount x contingency_percentage)
+        contingency_earned = db.execute(
+            "SELECT COALESCE(SUM(recovery_amount * contingency_percentage / 100.0), 0) as total FROM contract_tasks WHERE tenant_id = ? AND status = 'completed' AND billing_type = 'contingency'",
+            (tenant_id,)
+        ).fetchone()["total"]
+
         # Pending invoices (sent but not paid)
         pending_amount = db.execute(
             "SELECT COALESCE(SUM(total), 0) as total FROM invoices WHERE tenant_id = ? AND issued_by_id = ? AND status = 'sent'",
@@ -2375,9 +2415,10 @@ async def get_earnings(current_user: dict = Depends(get_current_user)):
         ).fetchall()
 
     return {
-        "total_earned": round(total_earned + flat_fee_earned, 2),
+        "total_earned": round(total_earned + flat_fee_earned + contingency_earned, 2),
         "hourly_earned": round(total_earned, 2),
         "flat_fee_earned": round(flat_fee_earned, 2),
+        "contingency_earned": round(contingency_earned, 2),
         "week_earned": round(week_earned, 2),
         "month_earned": round(month_earned, 2),
         "total_hours": round(total_hours, 2),
@@ -2922,6 +2963,13 @@ async def merge_tasks(
         ]
         if approved:
             raise HTTPException(400, f"{len(approved)} task(s) already have a scope or billing approval in progress and cannot be merged.")
+
+        # Contingency tasks (fee = a % of a case-wide recovery, not a summable
+        # rate/flat-fee figure) aren't supported by this merge — the sum logic
+        # below only knows how to combine hours and flat fees.
+        contingency_tasks = [t for t in task_dicts if t.get("billing_type") == "contingency"]
+        if contingency_tasks:
+            raise HTTPException(400, "Contingency-fee tasks cannot be merged — edit them individually instead.")
 
         contract_id = task_dicts[0]["contract_id"]
         contract = db.execute(
