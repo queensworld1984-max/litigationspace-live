@@ -4485,9 +4485,10 @@ async def remove_campaign_contact(case_id: str, campaign_id: str, contact_id: st
 
 @router.delete("/cases/{case_id}/campaigns/{campaign_id}")
 async def delete_campaign(case_id: str, campaign_id: str, current_user: dict = Depends(get_current_user)):
-    """Delete a still-pending campaign entirely. Nothing has sent yet, so
-    this fully removes it — for starting over after a wrong recipient list
-    or campaign type."""
+    """Delete a campaign entirely, regardless of its approval status —
+    including already-approved/rejected/completed ones (e.g. test campaigns).
+    This only removes the LitigationSpace record; it can't un-send any
+    step that already went out."""
     tenant_id = current_user["tenant_id"]
     with get_db() as db:
         campaign = db.execute(
@@ -4496,8 +4497,6 @@ async def delete_campaign(case_id: str, campaign_id: str, current_user: dict = D
         ).fetchone()
         if not campaign:
             raise HTTPException(404, "Campaign not found")
-        if campaign["status"] != "pending_approval":
-            raise HTTPException(400, "Can only delete a campaign before it's approved")
         db.execute("DELETE FROM campaign_emails WHERE campaign_id = ?", (campaign_id,))
         db.execute("DELETE FROM case_campaigns WHERE id = ?", (campaign_id,))
         db.commit()

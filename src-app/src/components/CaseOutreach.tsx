@@ -55,6 +55,7 @@ interface Campaign {
   id: string; status: string; firm_name?: string; from_name?: string
   litigation_type?: string; created_at: string; created_by_name?: string
   total_emails?: number; emails: CampaignEmail[]
+  approval_notes?: string; approved_by?: string
 }
 interface CampaignEmail {
   id: string; campaign_id: string; contact_id: string; contact_name?: string
@@ -968,7 +969,7 @@ export default function CaseOutreach({ caseId, onLoad }: Props) {
     }
   }
   async function deleteCampaign(campaignId: string) {
-    if (!confirm('Delete this entire campaign? This cannot be undone.')) return
+    if (!confirm('Delete this entire campaign? This removes the record permanently — it will not un-send any step that already went out.')) return
     try {
       await axios.delete(`/api/outreach/cases/${caseId}/campaigns/${campaignId}`, { headers: hdr() })
       loadCampaigns()
@@ -1346,10 +1347,22 @@ export default function CaseOutreach({ caseId, onLoad }: Props) {
                         {camp.created_by_name} · {fmtDate(camp.created_at)}{camp.firm_name ? ` · ${camp.firm_name}` : ''}{camp.litigation_type ? ` · ${camp.litigation_type}` : ''} · {camp.total_emails ?? 0} emails
                       </div>
                     </div>
-                    {camp.status === 'pending_approval' && (
-                      <button onClick={() => deleteCampaign(camp.id)} style={{ ...btn('outline'), padding: '3px 10px', fontSize: '0.7rem', color: '#f87171', borderColor: '#f8717144' }}>✕ Cancel Campaign</button>
-                    )}
+                    <button onClick={() => deleteCampaign(camp.id)} style={{ ...btn('outline'), padding: '3px 10px', fontSize: '0.7rem', color: '#f87171', borderColor: '#f8717144' }}>
+                      {camp.status === 'pending_approval' ? '✕ Cancel Campaign' : '🗑 Delete Campaign'}
+                    </button>
                   </div>
+                  {camp.status === 'rejected' && camp.approval_notes && (
+                    <div style={{ background: 'rgba(248,113,113,0.1)', border: '1px solid rgba(248,113,113,0.3)', borderRadius: 7, padding: '8px 12px', marginBottom: 10, fontSize: '0.78rem' }}>
+                      <span style={{ color: '#f87171', fontWeight: 700 }}>Rejection reason{camp.approved_by ? ` (${camp.approved_by})` : ''}: </span>
+                      <span style={{ color: T1 }}>{camp.approval_notes}</span>
+                    </div>
+                  )}
+                  {camp.status === 'approved' && camp.approval_notes && (
+                    <div style={{ background: 'rgba(52,211,153,0.08)', border: '1px solid rgba(52,211,153,0.25)', borderRadius: 7, padding: '8px 12px', marginBottom: 10, fontSize: '0.78rem' }}>
+                      <span style={{ color: '#34d399', fontWeight: 700 }}>Approval note: </span>
+                      <span style={{ color: T1 }}>{camp.approval_notes}</span>
+                    </div>
+                  )}
                   {/* Recipients — removable while still pending approval, so a
                       wrongly-included contact (e.g. the client's own contact
                       swept in by "select all") can be corrected before anything sends */}
