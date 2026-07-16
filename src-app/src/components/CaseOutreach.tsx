@@ -281,7 +281,7 @@ const SUB_TABS: { id: SubTab; label: string }[] = [
 // ── Empty form presets ────────────────────────────────────────────────────────
 const EMPTY_CT  = { name: '', email: '', phone: '', company: '', party_role: '', contact_title: '', amount_owed: '', currency: 'USD', notes: '', address_line1: '', address_line2: '', city: '', state: '', postal_code: '', country: '' }
 const EMPTY_SIG = { name: '', sender_name: '', sender_title: '', sender_email: '', sender_phone: '', company_name: '', logo_url: '', website_url: '', address_line1: '', address_line2: '', city: '', state: '', postal_code: '', country: '', accent_color: '#C8992A', layout: 'horizontal', is_default: false as boolean, custom_line: '' }
-const EMPTY_CAMP = { contact_ids: [] as string[], firm_name: '', firm_address: '', firm_phone: '', from_name: '', additional_notes: '', litigation_type: 'Demand for Arbitration', campaign_type: 'outstanding_amount' as 'outstanding_amount' | 'document_execution_request', document_ids: [] as string[], schedule_day_1: 0, schedule_day_2: 14, schedule_day_3: 28, schedule_day_4: 42, schedule_day_5: 49 }
+const EMPTY_CAMP = { contact_ids: [] as string[], firm_name: '', firm_address: '', firm_phone: '', from_name: '', additional_notes: '', litigation_type: 'Demand for Arbitration', campaign_type: 'outstanding_amount' as 'outstanding_amount' | 'document_execution_request', document_ids: [] as string[], schedule_day_1: 0, schedule_day_2: 14, schedule_day_3: 28, schedule_day_4: 42, schedule_day_5: 49, filed_quarters: '', additional_quarter: '', contingency_fee_text: '' }
 
 // ── Main Component ────────────────────────────────────────────────────────────
 interface Props { caseId: string; onLoad?: (n: number) => void }
@@ -2155,6 +2155,14 @@ export default function CaseOutreach({ caseId, onLoad }: Props) {
                         }} />
                     </label>
                     {docUploadError && <div style={{ color: '#f87171', fontSize: '0.72rem', marginTop: 6 }}>{docUploadError}</div>}
+                  </div>
+                  <div style={{ marginTop: 10, paddingTop: 10, borderTop: `1px solid ${BD}` }}>
+                    <label style={lbl}>Quarters already filed (validated by us)</label>
+                    <input style={inp} value={campForm.filed_quarters} onChange={e => setCampForm(p => ({ ...p, filed_quarters: e.target.value }))} placeholder="e.g. the second and third quarters of 2021" />
+                    <label style={{ ...lbl, marginTop: 8 }}>Additional quarter identified</label>
+                    <input style={inp} value={campForm.additional_quarter} onChange={e => setCampForm(p => ({ ...p, additional_quarter: e.target.value }))} placeholder="e.g. the first quarter of 2021" />
+                    <label style={{ ...lbl, marginTop: 8 }}>Contingency fee</label>
+                    <input style={inp} value={campForm.contingency_fee_text} onChange={e => setCampForm(p => ({ ...p, contingency_fee_text: e.target.value }))} placeholder="e.g. thirty percent (30%)" />
                   </div>
                 </div>
               )}

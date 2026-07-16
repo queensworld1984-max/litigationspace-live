@@ -1654,6 +1654,7 @@ def _build_advanced_html_tokens(
     base_tokens: dict, contact_name: str = "", recipient_address: str = "",
     sender_title: str = "", sender_email: str = "", firm_website: str = "", logo_url: str = "",
     firm_address: str = "", signature_sender_name: str = "",
+    filed_quarters: str = "", additional_quarter: str = "", contingency_fee_text: str = "",
 ) -> dict:
     """Extra [Token]s only needed by a fully custom, designer-authored raw
     HTML letter — the plain-text renderer doesn't need these since it
@@ -1676,6 +1677,9 @@ def _build_advanced_html_tokens(
         "[Firm Website]": firm_website or "",
         "[Firm Logo URL]": logo_url or "",
         "[Firm Address]": firm_address or "",
+        "[Filed Quarters]": filed_quarters or "",
+        "[Additional Quarter]": additional_quarter or "",
+        "[Contingency Fee]": contingency_fee_text or "",
     }
 
 
@@ -3837,6 +3841,13 @@ class CampaignCreate(BaseModel):
     from_name: Optional[str] = None
     additional_notes: Optional[str] = None
     litigation_type: str = "Demand for Arbitration"  # or "Intent to Sue", etc.
+    # ERC-specific facts for the "document_execution_request" wording track —
+    # which quarters were already filed/validated vs. newly identified, and
+    # the contingency rate — vary per client, so they're filled in per
+    # campaign rather than baked into the tenant's saved template.
+    filed_quarters: Optional[str] = None      # e.g. "the second and third quarters of 2021"
+    additional_quarter: Optional[str] = None  # e.g. "the first quarter of 2021"
+    contingency_fee_text: Optional[str] = None  # e.g. "thirty percent (30%)"
     # Which 5-stage wording track drives all 5 emails — never mixed within
     # one campaign. "document_execution_request" requires document_ids.
     campaign_type: str = "outstanding_amount"  # or "document_execution_request"
@@ -4039,6 +4050,8 @@ async def create_campaign(case_id: str, req: CampaignCreate, current_user: dict 
                                 sender_title=sig_extra.get("sender_title", ""), sender_email=sig_extra.get("sender_email", ""),
                                 firm_website=sig_extra.get("website_url", ""), logo_url=logo_url, firm_address=firm_address,
                         signature_sender_name=sig_extra.get("sender_name", ""),
+                                filed_quarters=req.filed_quarters or "", additional_quarter=req.additional_quarter or "",
+                                contingency_fee_text=req.contingency_fee_text or "",
                             )
                             subject = _substitute_tokens(stage1_custom_subject or "", adv_tokens)
                             html = _render_custom_html_template(stage1_custom["custom_html"], adv_tokens, document_links)
