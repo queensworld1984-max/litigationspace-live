@@ -705,6 +705,7 @@ async def send_scope_approval(task_id: str, req: ApprovalSendRequest = ApprovalS
             task_description=task_d.get("description") or "",
             entity_name=task_d.get("entity_name") or "",
             approval_url=approval_url,
+            cc=requester_email,
         )
     if not ok:
         raise HTTPException(
@@ -834,6 +835,7 @@ async def remind_scope_approval(task_id: str, current_user: dict = Depends(get_c
             entity_name=task_d.get("entity_name") or "",
             approval_url=approval_url,
             days_pending=days_pending,
+            cc=task_d.get("scope_requested_by_email") or current_user.get("email"),
         )
     if not ok:
         raise HTTPException(
@@ -1044,6 +1046,7 @@ async def send_billing_approval(task_id: str, req: ApprovalSendRequest = Approva
             amount=amount,
             approval_url=approval_url,
             attachment_count=attachment_count,
+            cc=requester_email,
         )
     if not ok:
         raise HTTPException(
@@ -1111,6 +1114,7 @@ async def remind_billing_approval(task_id: str, current_user: dict = Depends(get
             amount=task_d.get("billing_amount") or 0,
             approval_url=approval_url,
             days_pending=days_pending,
+            cc=task_d.get("billing_requested_by_email") or current_user.get("email"),
         )
     if not ok:
         raise HTTPException(

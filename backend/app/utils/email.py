@@ -45,18 +45,23 @@ def parse_recipients(raw) -> list:
     return out
 
 
-def _send_email(to_email, subject: str, html_body: str, sender: str = None) -> tuple:
+def _send_email(to_email, subject: str, html_body: str, sender: str = None, cc=None) -> tuple:
     """Send an email via SMTP. Returns (success, detail) — detail explains
     failures (invalid address, auth error, bounce reason) instead of hiding them.
-    Supports local Postfix (localhost:25 no auth) and remote SMTP (with TLS+auth)."""
+    Supports local Postfix (localhost:25 no auth) and remote SMTP (with TLS+auth).
+    `cc`, if given, is added to the envelope recipients (so it's actually
+    delivered, not just displayed) and de-duped against the To list."""
     recipients = parse_recipients(to_email)
     if not recipients:
         detail = f"No valid recipient address found in {to_email!r}"
         print(f"[EMAIL] {detail}")
         return False, detail
 
+    cc_recipients = [c for c in parse_recipients(cc) if c.lower() not in {r.lower() for r in recipients}]
+    envelope_recipients = recipients + cc_recipients
+
     if not SMTP_HOST:
-        print(f"[EMAIL] SMTP not configured. Would send to {recipients}: {subject}")
+        print(f"[EMAIL] SMTP not configured. Would send to {recipients} (cc {cc_recipients}): {subject}")
         print(f"[EMAIL] Body preview: {html_body[:200]}")
         return False, "SMTP not configured"
 
@@ -66,6 +71,8 @@ def _send_email(to_email, subject: str, html_body: str, sender: str = None) -> t
         _from = sender or SMTP_FROM
         msg["From"] = f"LitigationSpace <{_from}>"
         msg["To"] = ", ".join(recipients)
+        if cc_recipients:
+            msg["Cc"] = ", ".join(cc_recipients)
         msg["Reply-To"] = "support@litigationspace.com"
         import re as _re
         plain_text = _re.sub(r'<[^>]+>', ' ', html_body)
@@ -76,7 +83,7 @@ def _send_email(to_email, subject: str, html_body: str, sender: str = None) -> t
         if SMTP_HOST in ("localhost", "127.0.0.1") and not SMTP_USER:
             # Local Postfix — no auth/TLS needed
             with smtplib.SMTP(SMTP_HOST, SMTP_PORT) as server:
-                failures = server.sendmail(_from, recipients, msg.as_string())
+                failures = server.sendmail(_from, envelope_recipients, msg.as_string())
         else:
             # Remote SMTP — TLS + auth
             context = ssl.create_default_context()
@@ -97,16 +104,16 @@ def _send_email(to_email, subject: str, html_body: str, sender: str = None) -> t
                 server.starttls(context=context)
                 server.ehlo()
                 server.login(_user, _pass)
-                failures = server.sendmail(_from, recipients, msg.as_string())
+                failures = server.sendmail(_from, envelope_recipients, msg.as_string())
 
         if failures:
             # Partial failure — smtplib only raises when ALL recipients are refused.
-            sent_to = [r for r in recipients if r not in failures]
+            sent_to = [r for r in envelope_recipients if r not in failures]
             detail = f"Delivered to {sent_to or 'none'}; refused: {failures}"
             print(f"[EMAIL] Partial send for {subject}: {detail}")
             return bool(sent_to), detail
 
-        print(f"[EMAIL] Sent successfully to {recipients}: {subject}")
+        print(f"[EMAIL] Sent successfully to {envelope_recipients}: {subject}")
         return True, ""
     except Exception as e:
         detail = str(e)
@@ -305,7 +312,7 @@ def send_document_signed_firm_notify_email(to_email: str, staff_name: str, conta
 
 def send_scope_approval_email(to_email, client_name: str, sender_name: str,
                                task_title: str, task_description: str, entity_name: str,
-                               approval_url: str) -> tuple:
+                               approval_url: str, cc: str = None) -> tuple:
     """Send a Gate 1 scope-approval request — client approves the task description
     and which entity it's for before any work begins."""
     subject = f"{sender_name} needs your approval to start: {task_title}"
@@ -333,12 +340,12 @@ def send_scope_approval_email(to_email, client_name: str, sender_name: str,
         <p style="color: #94a3b8; font-size: 12px; text-align: center; margin-top: 20px;">&copy; 2026 LitigationSpace. All rights reserved.</p>
     </div>
     """
-    return _send_email(to_email, subject, html, sender=SMTP_FROM_BILLING)
+    return _send_email(to_email, subject, html, sender=SMTP_FROM_BILLING, cc=cc)
 
 
 def send_scope_reminder_email(to_email, client_name: str, sender_name: str,
                                task_title: str, entity_name: str,
-                               approval_url: str, days_pending: int) -> tuple:
+                               approval_url: str, days_pending: int, cc: str = None) -> tuple:
     """Nudge email for a Gate 1 scope-approval request that's already been sent
     but hasn't been acted on yet — reuses the same approval link."""
     subject = f"Reminder: still waiting on your approval — {task_title}"
@@ -369,12 +376,12 @@ def send_scope_reminder_email(to_email, client_name: str, sender_name: str,
         <p style="color: #94a3b8; font-size: 12px; text-align: center; margin-top: 20px;">&copy; 2026 LitigationSpace. All rights reserved.</p>
     </div>
     """
-    return _send_email(to_email, subject, html, sender=SMTP_FROM_BILLING)
+    return _send_email(to_email, subject, html, sender=SMTP_FROM_BILLING, cc=cc)
 
 
 def send_billing_reminder_email(to_email, client_name: str, sender_name: str,
                                  task_title: str, entity_name: str, amount: float,
-                                 approval_url: str, days_pending: int) -> tuple:
+                                 approval_url: str, days_pending: int, cc: str = None) -> tuple:
     """Nudge email for a Gate 2 billing-approval request that's already been
     sent but hasn't been acted on yet — reuses the same approval link."""
     subject = f"Reminder: bill awaiting your approval — {task_title}"
@@ -406,7 +413,7 @@ def send_billing_reminder_email(to_email, client_name: str, sender_name: str,
         <p style="color: #94a3b8; font-size: 12px; text-align: center; margin-top: 20px;">&copy; 2026 LitigationSpace. All rights reserved.</p>
     </div>
     """
-    return _send_email(to_email, subject, html, sender=SMTP_FROM_BILLING)
+    return _send_email(to_email, subject, html, sender=SMTP_FROM_BILLING, cc=cc)
 
 
 def send_campaign_approval_email(to_email, approver_name: str, sender_name: str,
@@ -498,7 +505,7 @@ def send_campaign_rejected_notify_email(to_email, requester_name: str, approver_
 def send_billing_approval_email(to_email, client_name: str, sender_name: str,
                                  task_title: str, entity_name: str, fee_description: str,
                                  amount: float,
-                                 approval_url: str, attachment_count: int = 0) -> tuple:
+                                 approval_url: str, attachment_count: int = 0, cc: str = None) -> tuple:
     """Send a Gate 2 billing-approval request — client approves the exact dollar
     amount for completed work before it can roll into an invoice."""
     subject = f"{sender_name} sent you a bill for approval: {task_title}"
@@ -532,7 +539,7 @@ def send_billing_approval_email(to_email, client_name: str, sender_name: str,
         <p style="color: #94a3b8; font-size: 12px; text-align: center; margin-top: 20px;">&copy; 2026 LitigationSpace. All rights reserved.</p>
     </div>
     """
-    return _send_email(to_email, subject, html, sender=SMTP_FROM_BILLING)
+    return _send_email(to_email, subject, html, sender=SMTP_FROM_BILLING, cc=cc)
 
 
 def send_scope_query_contractor_email(to_email: str, contractor_name: str, task_title: str,
