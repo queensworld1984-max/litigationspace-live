@@ -332,6 +332,8 @@ export const billingAPI = {
     api.post(`/v1/billing/tasks/${taskId}/billing/send`, payload ?? {}),
   remindBillingApproval: (taskId: string) =>
     api.post(`/v1/billing/tasks/${taskId}/billing/remind`),
+  unsendBillingApproval: (taskId: string) =>
+    api.post(`/v1/billing/tasks/${taskId}/billing/unsend`),
   getBillingApprovalByToken: (token: string) =>
     api.get(`/v1/billing/billing-approval/${token}`),
   approveBilling: (token: string) =>

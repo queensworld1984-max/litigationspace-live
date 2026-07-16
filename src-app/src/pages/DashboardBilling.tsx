@@ -71,6 +71,9 @@ interface BillableTaskRow {
   flat_fee_amount?: number
   contingency_percentage?: number
   recovery_amount?: number
+  billing_summary_text?: string
+  billing_recipient_name?: string
+  billing_recipient_email?: string
   scope_status?: string
   scope_query_note?: string
   scope_rejected_reason?: string
@@ -1657,6 +1660,19 @@ function BillableTaskModal({ onClose }: BillableTaskModalProps) {
       .catch(() => { setApprovalBusyId(null); setApprovalMsg(p => ({ ...p, [taskId]: '✕ Failed to send reminder' })) })
   }
 
+  const [unsendConfirmId, setUnsendConfirmId] = useState<string | null>(null)
+  const doUnsendBilling = (taskId: string) => {
+    setApprovalBusyId(taskId)
+    apiFetch(`/api/v1/billing/tasks/${taskId}/billing/unsend`, { method: 'POST' })
+      .then(d => {
+        setApprovalBusyId(null)
+        setUnsendConfirmId(null)
+        setApprovalMsg(p => ({ ...p, [taskId]: d.detail ? `✕ ${d.detail}` : '✓ Bill unsent' }))
+        if (contract) { setTaskCache(prev => { const n = { ...prev }; delete n[contract.id]; return n }); fetchTasks(contract.id) }
+      })
+      .catch(() => { setApprovalBusyId(null); setApprovalMsg(p => ({ ...p, [taskId]: '✕ Failed to unsend' })) })
+  }
+
   const lineItems = (useSelection = true) => {
     const sel = useSelection ? selectedTaskIds : null
     const out: InvoiceItem[] = []
@@ -2175,10 +2191,10 @@ function BillableTaskModal({ onClose }: BillableTaskModalProps) {
                                       Send for Scope Approval
                                     </button>
                                   )}
-                                  {t.scope_status === 'approved' && (!t.billing_status || t.billing_status === 'pending' || t.billing_status === 'rejected') && (
+                                  {t.scope_status === 'approved' && t.billing_status !== 'approved' && (
                                     <button onClick={() => doSendBilling(t.id)} disabled={approvalBusyId === t.id}
                                       style={{ background: 'rgba(217,119,6,0.15)', border: '1px solid rgba(217,119,6,0.35)', color: '#fbbf24', borderRadius: 6, padding: '2px 8px', fontSize: '0.7rem', fontWeight: 700, cursor: 'pointer', opacity: approvalBusyId === t.id ? 0.5 : 1 }}>
-                                      Send Bill for Approval
+                                      {t.billing_status ? 'Resend Bill for Approval' : 'Send Bill for Approval'}
                                     </button>
                                   )}
                                   {t.scope_status === 'sent' && (
@@ -2192,6 +2208,25 @@ function BillableTaskModal({ onClose }: BillableTaskModalProps) {
                                       style={{ background: 'rgba(251,191,36,0.15)', border: '1px solid rgba(251,191,36,0.35)', color: '#fbbf24', borderRadius: 6, padding: '2px 8px', fontSize: '0.7rem', fontWeight: 700, cursor: 'pointer', opacity: approvalBusyId === t.id ? 0.5 : 1 }}>
                                       🔔 Remind (Bill){t.billing_reminder_count ? ` · ${t.billing_reminder_count}` : ''}
                                     </button>
+                                  )}
+                                  {t.billing_status === 'sent' && (
+                                    unsendConfirmId === t.id ? (
+                                      <>
+                                        <button onClick={() => doUnsendBilling(t.id)} disabled={approvalBusyId === t.id}
+                                          style={{ background: 'rgba(248,113,113,0.25)', border: '1px solid rgba(248,113,113,0.5)', color: '#f87171', borderRadius: 6, padding: '2px 8px', fontSize: '0.7rem', fontWeight: 700, cursor: 'pointer' }}>
+                                          Confirm Unsend?
+                                        </button>
+                                        <button onClick={() => setUnsendConfirmId(null)}
+                                          style={{ background: 'transparent', border: '1px solid #475569', color: '#94a3b8', borderRadius: 6, padding: '2px 7px', fontSize: '0.7rem', cursor: 'pointer' }}>
+                                          ✕
+                                        </button>
+                                      </>
+                                    ) : (
+                                      <button onClick={() => setUnsendConfirmId(t.id)} disabled={approvalBusyId === t.id}
+                                        style={{ background: 'rgba(248,113,113,0.12)', border: '1px solid rgba(248,113,113,0.35)', color: '#f87171', borderRadius: 6, padding: '2px 8px', fontSize: '0.7rem', fontWeight: 700, cursor: 'pointer', opacity: approvalBusyId === t.id ? 0.5 : 1 }}>
+                                        ↩ Unsend Bill
+                                      </button>
+                                    )
                                   )}
                                   {approvalMsg[t.id] && <span style={{ fontSize: '0.7rem', color: approvalMsg[t.id].startsWith('✓') ? '#34d399' : '#f87171' }}>{approvalMsg[t.id]}</span>}
                                 </div>
@@ -2649,10 +2684,11 @@ export default function DashboardBilling() {
 
   const openSendApproval = (t: BillableTaskRow) => {
     setSendApprovalTarget(t)
-    setSupervisorName(t.client_name ?? '')
-    setSupervisorEmail(t.client_email ?? '')
+    const isBillingStep = t.scope_status === 'approved'
+    setSupervisorName((isBillingStep ? t.billing_recipient_name : undefined) ?? t.client_name ?? '')
+    setSupervisorEmail((isBillingStep ? t.billing_recipient_email : undefined) ?? t.client_email ?? '')
     setSendApprovalMsg('')
-    setBillSummary(''); setBillNewFiles([]); setBillExisting([])
+    setBillSummary(t.billing_summary_text || ''); setBillNewFiles([]); setBillExisting([])
     if (t.scope_status === 'approved') {
       billingAPI.getTaskAttachments(t.id).then(r => {
         setBillExisting((r.data?.attachments ?? []) as { id: string; filename: string; size_bytes?: number }[])
@@ -2748,6 +2784,20 @@ export default function DashboardBilling() {
     } catch (err: unknown) {
       const detail = (err as { response?: { data?: { detail?: string } } })?.response?.data?.detail
       setRemindMsg(p => ({ ...p, [t.id]: detail || 'Failed to send reminder' }))
+    } finally { setRemindBusyId(null) }
+  }
+
+  const [unsendConfirmRowId, setUnsendConfirmRowId] = useState<string | null>(null)
+  const unsendBillingNow = async (t: BillableTaskRow) => {
+    setRemindBusyId(t.id)
+    try {
+      await billingAPI.unsendBillingApproval(t.id)
+      setUnsendConfirmRowId(null)
+      setRemindMsg(p => ({ ...p, [t.id]: '✓ Bill unsent' }))
+      fetchBillableTasks()
+    } catch (err: unknown) {
+      const detail = (err as { response?: { data?: { detail?: string } } })?.response?.data?.detail
+      setRemindMsg(p => ({ ...p, [t.id]: detail || 'Failed to unsend' }))
     } finally { setRemindBusyId(null) }
   }
 
@@ -3651,7 +3701,7 @@ export default function DashboardBilling() {
                     const billingApproved = t.billing_status === 'approved'
                     const fullyApproved = scopeApproved && billingApproved
                     const needsScope = !scopeApproved
-                    const needsBilling = scopeApproved && !billingApproved && t.billing_status !== 'sent'
+                    const needsBilling = scopeApproved && !billingApproved
                     // "Task Approved" is reserved for the fully-done state (both gates) —
                     // that's the only state where the action is just "Add to Invoice",
                     // never another "Send for Approval".
@@ -3697,7 +3747,7 @@ export default function DashboardBilling() {
                               onClick={() => openSendApproval(t)}
                               style={{ padding: '6px 12px', borderRadius: 6, border: 'none', background: needsBilling ? 'linear-gradient(135deg,#f59e0b,#d97706)' : 'linear-gradient(135deg,#3b82f6,#2563eb)', color: needsBilling ? '#000' : '#fff', fontSize: 11, fontWeight: 800, cursor: 'pointer' }}
                             >
-                              {t.scope_status === 'sent' ? 'Resend' : 'Send for Approval'}
+                              {(scopeApproved ? t.billing_status : t.scope_status) ? 'Resend' : 'Send for Approval'}
                             </button>
                           )}
                           {!fullyApproved && t.scope_status === 'sent' && (
@@ -3717,6 +3767,33 @@ export default function DashboardBilling() {
                             >
                               🔔 Remind{t.billing_reminder_count ? ` · ${t.billing_reminder_count}` : ''}
                             </button>
+                          )}
+                          {!fullyApproved && t.billing_status === 'sent' && (
+                            unsendConfirmRowId === t.id ? (
+                              <>
+                                <button
+                                  onClick={() => unsendBillingNow(t)}
+                                  disabled={remindBusyId === t.id}
+                                  style={{ padding: '6px 10px', borderRadius: 6, border: '1px solid rgba(248,113,113,0.5)', background: 'rgba(248,113,113,0.25)', color: '#f87171', fontSize: 11, fontWeight: 800, cursor: 'pointer' }}
+                                >
+                                  Confirm Unsend?
+                                </button>
+                                <button
+                                  onClick={() => setUnsendConfirmRowId(null)}
+                                  style={{ padding: '6px 9px', borderRadius: 6, border: '1px solid rgba(255,255,255,0.18)', background: 'transparent', color: 'rgba(255,255,255,0.6)', fontSize: 11, cursor: 'pointer' }}
+                                >
+                                  ✕
+                                </button>
+                              </>
+                            ) : (
+                              <button
+                                onClick={() => setUnsendConfirmRowId(t.id)}
+                                disabled={remindBusyId === t.id}
+                                style={{ padding: '6px 12px', borderRadius: 6, border: '1px solid rgba(248,113,113,0.35)', background: 'rgba(248,113,113,0.12)', color: '#f87171', fontSize: 11, fontWeight: 800, cursor: 'pointer', opacity: remindBusyId === t.id ? 0.5 : 1 }}
+                              >
+                                ↩ Unsend Bill
+                              </button>
+                            )
                           )}
                           {remindMsg[t.id] && <span style={{ fontSize: 10, color: remindMsg[t.id].startsWith('✓') ? '#34d399' : '#f87171', width: '100%' }}>{remindMsg[t.id]}</span>}
                           {scopeApproved && (

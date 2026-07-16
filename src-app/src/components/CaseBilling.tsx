@@ -36,6 +36,7 @@ interface BillingTask {
   estimated_hours?: number; task_date?: string; target_end_date?: string; status: string
   contingency_percentage?: number; recovery_amount?: number
   scope_status?: string; billing_status?: string; billing_amount?: number
+  billing_summary_text?: string
   invoice_id?: string | null
   scope_reminder_count?: number; billing_reminder_count?: number
 }
@@ -62,7 +63,7 @@ const EMPTY_CTR: CtrForm = {
   notes: '', payment_link: '', start_date: '', end_date: '',
 }
 
-type ModalKey = 'new-contract' | 'edit-contract' | 'log-time' | 'log-external' | 'record-payment' | 'invoice-preview' | 'add-task' | 'send-billing' | null
+type ModalKey = 'new-contract' | 'edit-contract' | 'log-time' | 'log-external' | 'record-payment' | 'invoice-preview' | 'add-task' | 'edit-task' | 'send-billing' | null
 
 const ACTIVITIES = [
   'Extracting emails from inbox', 'Downloading documents from Monday.com',
@@ -212,6 +213,60 @@ export default function CaseBilling({ caseId }: { caseId: string }) {
   const [taskMsg,    setTaskMsg]    = useState<{ ok: boolean; text: string } | null>(null)
   const [approvalBusyId, setApprovalBusyId] = useState<string | null>(null)
   const [approvalMsg, setApprovalMsg] = useState<Record<string, string>>({})
+
+  // ── Edit billable task — lets you correct hours/amount/etc. before resending a bill ──
+  const [editTaskTarget, setEditTaskTarget] = useState<BillingTask | null>(null)
+  const [editTaskForm,   setEditTaskForm]   = useState({ ...EMPTY_TASK })
+  const [editTaskSaving, setEditTaskSaving] = useState(false)
+  const [editTaskMsg,    setEditTaskMsg]    = useState<{ ok: boolean; text: string } | null>(null)
+
+  const openEditTask = (t: BillingTask) => {
+    setEditTaskTarget(t)
+    setEditTaskForm({
+      contract_id: '', title: t.title, entity_name: t.entity_name || '',
+      billing_type: t.billing_type,
+      hourly_rate: t.hourly_rate != null ? String(t.hourly_rate) : '',
+      flat_fee_amount: t.flat_fee_amount != null ? String(t.flat_fee_amount) : '',
+      estimated_hours: t.estimated_hours != null ? String(t.estimated_hours) : '',
+      contingency_percentage: t.contingency_percentage != null ? String(t.contingency_percentage) : '',
+      recovery_amount: t.recovery_amount != null ? String(t.recovery_amount) : '',
+      description: t.description || '', task_date: t.task_date || todayStr(),
+      target_end_date: t.target_end_date || '',
+    })
+    setEditTaskMsg(null)
+    setModal('edit-task')
+  }
+
+  const saveEditTask = async () => {
+    if (!editTaskTarget || !editTaskForm.title.trim()) return
+    if (!editTaskForm.entity_name.trim()) { setEditTaskMsg({ ok: false, text: 'Entity is required — which company/client is this task for?' }); return }
+    setEditTaskSaving(true); setEditTaskMsg(null)
+    try {
+      const body: Record<string, unknown> = {
+        title: editTaskForm.title.trim(),
+        entity_name: editTaskForm.entity_name.trim(),
+        description: editTaskForm.description.trim(),
+        billing_type: editTaskForm.billing_type,
+        task_date: editTaskForm.task_date || undefined,
+        target_end_date: editTaskForm.target_end_date || undefined,
+      }
+      if (editTaskForm.billing_type === 'flat_fee') {
+        body.flat_fee_amount = parseFloat(editTaskForm.flat_fee_amount) || 0
+      } else if (editTaskForm.billing_type === 'contingency') {
+        body.contingency_percentage = parseFloat(editTaskForm.contingency_percentage) || 0
+        body.recovery_amount = parseFloat(editTaskForm.recovery_amount) || 0
+      } else {
+        body.hourly_rate = parseFloat(editTaskForm.hourly_rate) || 0
+        body.estimated_hours = parseFloat(editTaskForm.estimated_hours) || 0
+      }
+      await billingAPI.updateTask(editTaskTarget.id, body)
+      setModal(null); setEditTaskTarget(null)
+      await loadTasks(contracts)
+    } catch (err: unknown) {
+      const detail = (err as { response?: { data?: { detail?: string } } })?.response?.data?.detail
+      setEditTaskMsg({ ok: false, text: detail || 'Failed to save — please try again.' })
+    } finally { setEditTaskSaving(false) }
+  }
 
   // ── Send Bill for Approval modal — pasted summary + finished-document attachments ──
   const [billTarget, setBillTarget] = useState<BillingTask | null>(null)
@@ -474,8 +529,21 @@ export default function CaseBilling({ caseId }: { caseId: string }) {
     } finally { setApprovalBusyId(null) }
   }
 
+  const unsendBilling = async (taskId: string) => {
+    if (!window.confirm('Unsend this bill? The link already sent to the client will stop working — you can edit and resend afterward.')) return
+    setApprovalBusyId(taskId)
+    try {
+      await billingAPI.unsendBillingApproval(taskId)
+      setApprovalMsg(p => ({ ...p, [taskId]: '✓ Bill unsent' }))
+      await loadTasks(contracts)
+    } catch (err: unknown) {
+      const detail = (err as { response?: { data?: { detail?: string } } })?.response?.data?.detail
+      setApprovalMsg(p => ({ ...p, [taskId]: `✕ ${detail || 'Failed to unsend'}` }))
+    } finally { setApprovalBusyId(null) }
+  }
+
   const openSendBilling = async (task: BillingTask) => {
-    setBillTarget(task); setBillSummary(''); setBillNewFiles([]); setBillError('')
+    setBillTarget(task); setBillSummary(task.billing_summary_text || ''); setBillNewFiles([]); setBillError('')
     setModal('send-billing')
     try {
       const r = await billingAPI.getTaskAttachments(task.id)
@@ -636,7 +704,7 @@ export default function CaseBilling({ caseId }: { caseId: string }) {
                             : t.billing_type === 'contingency' ? (t.recovery_amount || 0) * (t.contingency_percentage || 0) / 100
                             : (t.estimated_hours || 0) * (t.hourly_rate || 0)
                           const needsScope = !t.scope_status || t.scope_status === 'pending' || t.scope_status === 'rejected'
-                          const needsBilling = t.scope_status === 'approved' && (!t.billing_status || t.billing_status === 'pending' || t.billing_status === 'rejected')
+                          const needsBilling = t.scope_status === 'approved' && t.billing_status !== 'approved'
                           const scopeAwaiting = t.scope_status === 'sent'
                           const billingAwaiting = t.billing_status === 'sent'
                           return (
@@ -656,6 +724,10 @@ export default function CaseBilling({ caseId }: { caseId: string }) {
                                 </div>
                                 <div style={{ display: 'flex', alignItems: 'center', gap: 6, flexShrink: 0 }}>
                                   <span style={{ color: GOLD, fontWeight: 700, fontSize: '0.82rem' }}>{fmtMoney(amt)}</span>
+                                  <button onClick={() => openEditTask(t)} title="Edit"
+                                    style={{ background: 'rgba(59,130,246,0.15)', border: '1px solid rgba(59,130,246,0.35)', color: '#60a5fa', borderRadius: 6, padding: '2px 7px', fontSize: '0.7rem', fontWeight: 700, cursor: 'pointer' }}>
+                                    ✏
+                                  </button>
                                   <button onClick={() => deleteTask(c.id, t.id)} style={{ background: 'none', border: 'none', color: '#ef4444', cursor: 'pointer', fontSize: '1rem', padding: '0 2px', lineHeight: 1 }}>×</button>
                                 </div>
                               </div>
@@ -671,7 +743,7 @@ export default function CaseBilling({ caseId }: { caseId: string }) {
                                 {needsBilling && (
                                   <button onClick={() => openSendBilling(t)}
                                     style={{ background: 'rgba(217,119,6,0.15)', border: '1px solid rgba(217,119,6,0.35)', color: '#fbbf24', borderRadius: 6, padding: '2px 8px', fontSize: '0.65rem', fontWeight: 700, cursor: 'pointer' }}>
-                                    Send Bill for Approval
+                                    {t.billing_status ? 'Resend Bill for Approval' : 'Send Bill for Approval'}
                                   </button>
                                 )}
                                 {scopeAwaiting && (
@@ -684,6 +756,12 @@ export default function CaseBilling({ caseId }: { caseId: string }) {
                                   <button onClick={() => remindBilling(t.id)} disabled={approvalBusyId === t.id}
                                     style={{ background: 'rgba(251,191,36,0.15)', border: '1px solid rgba(251,191,36,0.35)', color: '#fbbf24', borderRadius: 6, padding: '2px 8px', fontSize: '0.65rem', fontWeight: 700, cursor: 'pointer', opacity: approvalBusyId === t.id ? 0.5 : 1 }}>
                                     🔔 Remind (Bill){t.billing_reminder_count ? ` · ${t.billing_reminder_count}` : ''}
+                                  </button>
+                                )}
+                                {billingAwaiting && (
+                                  <button onClick={() => unsendBilling(t.id)} disabled={approvalBusyId === t.id}
+                                    style={{ background: 'rgba(248,113,113,0.12)', border: '1px solid rgba(248,113,113,0.35)', color: '#f87171', borderRadius: 6, padding: '2px 8px', fontSize: '0.65rem', fontWeight: 700, cursor: 'pointer', opacity: approvalBusyId === t.id ? 0.5 : 1 }}>
+                                    ↩ Unsend Bill
                                   </button>
                                 )}
                                 {approvalMsg[t.id] && <span style={{ fontSize: '0.65rem', color: approvalMsg[t.id].startsWith('✓') ? '#34d399' : '#f87171' }}>{approvalMsg[t.id]}</span>}
@@ -1015,6 +1093,72 @@ export default function CaseBilling({ caseId }: { caseId: string }) {
           </ModalWrap>
         )
       })()}
+
+      {/* Edit Billable Task — correct hours/amount/etc. before resending a bill */}
+      {modal === 'edit-task' && editTaskTarget && (
+        <ModalWrap onClose={() => { setModal(null); setEditTaskTarget(null) }} extraBorder="#60a5fa">
+          <MHead title={`Edit Task — ${editTaskTarget.title}`} onClose={() => { setModal(null); setEditTaskTarget(null) }} color="#60a5fa" />
+          <div style={{ display: 'flex', flexDirection: 'column', gap: 12 }}>
+            <Field label="Task Title *">
+              <input style={inp} value={editTaskForm.title} onChange={e => setEditTaskForm(p => ({ ...p, title: e.target.value }))} placeholder="e.g. Document review" />
+            </Field>
+            <Field label="Entity / Client *">
+              <input style={inp} value={editTaskForm.entity_name} onChange={e => setEditTaskForm(p => ({ ...p, entity_name: e.target.value }))} placeholder="e.g. TAPDash, ERTC Funding" />
+            </Field>
+            <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: 10 }}>
+              <Field label="Billing Type">
+                <select style={inp} value={editTaskForm.billing_type} onChange={e => setEditTaskForm(p => ({ ...p, billing_type: e.target.value }))}>
+                  <option value="hourly">Hourly</option>
+                  <option value="flat_fee">Flat Fee</option>
+                  <option value="contingency">Contingency</option>
+                </select>
+              </Field>
+              <Field label="Start Date">
+                <input style={inp} type="date" value={editTaskForm.task_date} onChange={e => setEditTaskForm(p => ({ ...p, task_date: e.target.value }))} />
+              </Field>
+            </div>
+            <Field label="Target Completion (optional)">
+              <input style={inp} type="date" value={editTaskForm.target_end_date} onChange={e => setEditTaskForm(p => ({ ...p, target_end_date: e.target.value }))} />
+            </Field>
+            {editTaskForm.billing_type === 'flat_fee' ? (
+              <Field label="Flat Fee Amount ($)">
+                <input style={inp} type="number" min="0" step="0.01" value={editTaskForm.flat_fee_amount} onChange={e => setEditTaskForm(p => ({ ...p, flat_fee_amount: e.target.value }))} placeholder="500.00" />
+              </Field>
+            ) : editTaskForm.billing_type === 'contingency' ? (
+              <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: 10 }}>
+                <Field label="Contingency Fee (%)">
+                  <input style={inp} type="number" min="0" max="100" step="0.01" value={editTaskForm.contingency_percentage} onChange={e => setEditTaskForm(p => ({ ...p, contingency_percentage: e.target.value }))} placeholder="33.33" />
+                </Field>
+                <Field label="Recovery / Settlement ($)">
+                  <input style={inp} type="number" min="0" step="0.01" value={editTaskForm.recovery_amount} onChange={e => setEditTaskForm(p => ({ ...p, recovery_amount: e.target.value }))} placeholder="0.00 (once known)" />
+                </Field>
+              </div>
+            ) : (
+              <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: 10 }}>
+                <Field label="Hourly Rate ($/hr)">
+                  <input style={inp} type="number" min="0" step="0.01" value={editTaskForm.hourly_rate} onChange={e => setEditTaskForm(p => ({ ...p, hourly_rate: e.target.value }))} placeholder="0" />
+                </Field>
+                <Field label="Hours">
+                  <input style={inp} type="number" min="0" step="0.25" value={editTaskForm.estimated_hours} onChange={e => setEditTaskForm(p => ({ ...p, estimated_hours: e.target.value }))} placeholder="2.5" />
+                </Field>
+              </div>
+            )}
+            <Field label="Description (optional)">
+              <input style={inp} value={editTaskForm.description} onChange={e => setEditTaskForm(p => ({ ...p, description: e.target.value }))} placeholder="Brief note" />
+            </Field>
+          </div>
+          {editTaskTarget.billing_status === 'sent' && (
+            <div style={{ marginTop: 12, fontSize: '0.75rem', color: '#fbbf24', background: 'rgba(251,191,36,0.1)', border: '1px solid rgba(251,191,36,0.3)', borderRadius: 6, padding: '8px 10px' }}>
+              This bill is already awaiting client approval. Saving here updates the task — use "Resend Bill for Approval" afterward to send the client the corrected amount.
+            </div>
+          )}
+          {editTaskMsg && <div style={{ marginTop: 12, fontSize: '0.78rem', color: editTaskMsg.ok ? '#34d399' : '#f87171' }}>{editTaskMsg.text}</div>}
+          <div style={{ display: 'flex', gap: 10, marginTop: 18 }}>
+            <Btn onClick={saveEditTask} disabled={editTaskSaving || !editTaskForm.title.trim()} color="#2563eb">{editTaskSaving ? 'Saving…' : 'Save Changes'}</Btn>
+            <Btn onClick={() => { setModal(null); setEditTaskTarget(null) }} outline>Cancel</Btn>
+          </div>
+        </ModalWrap>
+      )}
 
       {/* Send Bill for Approval — pasted summary + finished-document attachments */}
       {modal === 'send-billing' && billTarget && (() => {

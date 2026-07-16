@@ -1120,6 +1120,30 @@ async def remind_billing_approval(task_id: str, current_user: dict = Depends(get
     return {"message": "Reminder sent", "approval_url": approval_url, "sent_to": task_d["billing_recipient_email"], "reminder_count": reminder_count}
 
 
+@router.post("/tasks/{task_id}/billing/unsend")
+async def unsend_billing_approval(task_id: str, current_user: dict = Depends(get_current_user)):
+    """Withdraw a pending Gate 2 bill so it can be corrected and sent again —
+    invalidates the link already in the client's hands (rather than leaving a
+    stale amount approvable) and puts the task back to needing a fresh send."""
+    tenant_id = current_user["tenant_id"]
+    with get_db() as db:
+        task = db.execute(
+            "SELECT id, billing_status FROM contract_tasks WHERE id = ? AND tenant_id = ?",
+            (task_id, tenant_id)
+        ).fetchone()
+        if not task:
+            raise HTTPException(status_code=404, detail="Task not found")
+        if task["billing_status"] != "sent":
+            raise HTTPException(status_code=400, detail="This bill isn't currently pending approval — nothing to unsend")
+        db.execute(
+            """UPDATE contract_tasks SET billing_status='pending', billing_token=NULL, billing_token_expires_at=NULL,
+               billing_sent_at=NULL, billing_reminder_count=0, billing_last_reminded_at=NULL
+               WHERE id=?""",
+            (task_id,)
+        )
+    return {"message": "Bill unsent — edit the task, then send it again when ready"}
+
+
 @router.get("/billing-approval/{token}")
 async def get_billing_for_approval(token: str):
     """Public: fetch the bill details for the client to review before approving. No auth required."""
