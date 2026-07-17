@@ -1869,10 +1869,13 @@ def _render_plaintext_body(body_text: str, tokens: dict, document_links: list = 
     [Amount Owed] / [Document Name] / [Document Links] (before substitution)
     renders as the matching visual callout instead of plain prose.
 
-    Within a paragraph block, lines starting with "- " become a real
-    bulleted list and lines starting with "1. " become a real numbered
-    list — plain-text conventions non-technical editors already know from
-    Word/Docs, instead of requiring HTML <ul>/<li> markup."""
+    Within a paragraph block, lines starting with "- " or "1. " are kept
+    as their own indented lines, exactly as typed/pasted — plain-text
+    conventions non-technical editors already know from Word/Docs, instead
+    of requiring HTML <ul>/<li> markup. Numbers are never stripped or
+    renumbered: a real <ol> would let the browser auto-number sequentially
+    (1, 2, 3, ...) and silently discard whatever the user actually pasted
+    (e.g. 1, 2, 5), so list lines render as literal <p> tags instead."""
     parts = []
     for raw_para in body_text.split("\n\n"):
         stripped = raw_para.strip()
@@ -1912,12 +1915,15 @@ def _render_plaintext_body(body_text: str, tokens: dict, document_links: list = 
                 escaped = html_escape.escape(substituted).replace("\n", "<br>\n")
                 parts.append(f'<p style="color: #374151; font-size: 14px; line-height: 1.7; margin: 0 0 16px 0;">{escaped}</p>')
             else:
-                prefix_re = _BULLET_RE if kind == "ul" else _NUMBERED_RE
+                # Literal <p> per line — not <ol>/<li> — so whatever the
+                # user typed or pasted (their own numbers, letters, dashes)
+                # renders and copy/pastes back out exactly as-is, instead of
+                # being stripped and replaced with browser auto-numbering.
                 items = "".join(
-                    f'<li style="margin: 0 0 6px 0;">{html_escape.escape(_substitute_tokens(prefix_re.sub("", ln), tokens))}</li>'
+                    f'<p style="color: #374151; font-size: 14px; line-height: 1.7; margin: 0 0 6px 0; padding-left: 22px;">{html_escape.escape(_substitute_tokens(ln, tokens))}</p>'
                     for ln in glines
                 )
-                parts.append(f'<{kind} style="color: #374151; font-size: 14px; line-height: 1.7; margin: 0 0 16px 0; padding-left: 22px;">{items}</{kind}>')
+                parts.append(items)
     return "\n".join(parts)
 
 
