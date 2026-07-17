@@ -786,7 +786,7 @@ function NewContractModal({ form, set, saving, error, onClose, onSave }: NewCont
           {/* Description */}
           <div style={g1}>
             <label style={lbl}>Description / Scope of Work</label>
-            <textarea {...bind('description')} rows={3} placeholder="Brief description of services…" style={{ ...f, resize: 'vertical' }} />
+            <textarea {...bind('description')} rows={12} placeholder="Brief description of services…" style={{ ...f, minHeight: 260, resize: 'vertical' }} />
           </div>
 
           {/* Notes */}
@@ -3441,7 +3441,7 @@ export default function DashboardBilling() {
               </div>
               <div style={{ marginBottom: 12 }}>
                 <label style={{ display: 'block', fontSize: 11, fontWeight: 700, color: T3, textTransform: 'uppercase', letterSpacing: '0.06em', marginBottom: 5 }}>Scope of Work / Description</label>
-                <textarea value={editBtForm.description} onChange={e => setEditBtForm(p => ({ ...p, description: e.target.value }))} rows={3} style={{ width: '100%', boxSizing: 'border-box', background: BG, border: `1px solid ${BD2}`, borderRadius: 8, color: T1, padding: '9px 12px', fontSize: 13, outline: 'none', resize: 'vertical' }} />
+                <textarea value={editBtForm.description} onChange={e => setEditBtForm(p => ({ ...p, description: e.target.value }))} rows={12} style={{ width: '100%', boxSizing: 'border-box', background: BG, border: `1px solid ${BD2}`, borderRadius: 8, color: T1, padding: '9px 12px', fontSize: 13, outline: 'none', resize: 'vertical', minHeight: 260 }} />
               </div>
               <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: 10, marginBottom: 12 }}>
                 <div>

@@ -1,4 +1,5 @@
 """Email utility for sending verification and password reset emails via SMTP."""
+import html as html_escape
 import os
 import re
 import smtplib
@@ -316,6 +317,11 @@ def send_scope_approval_email(to_email, client_name: str, sender_name: str,
     """Send a Gate 1 scope-approval request — client approves the task description
     and which entity it's for before any work begins."""
     subject = f"{sender_name} needs your approval to start: {task_title}"
+    # Escape + convert newlines to <br> so a pasted numbered/lettered scope
+    # keeps its line breaks in the email exactly as it does on the actual
+    # approval page (which already renders this field with white-space:
+    # pre-wrap) — plain HTML collapses raw "\n" characters otherwise.
+    task_description_html = html_escape.escape(task_description or "").replace("\n", "<br>\n")
     html = f"""
     <div style="font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif; max-width: 600px; margin: 0 auto; padding: 40px 20px;">
         <div style="text-align: center; margin-bottom: 30px;">
@@ -329,7 +335,7 @@ def send_scope_approval_email(to_email, client_name: str, sender_name: str,
             <div style="background: #eff6ff; border: 1px solid #93c5fd; border-radius: 8px; padding: 16px; margin: 20px 0;">
                 <p style="color: #1e3a8a; font-size: 13px; margin: 0 0 6px 0; text-transform: uppercase; letter-spacing: 0.05em;">For: {entity_name}</p>
                 <p style="color: #1e3a8a; font-size: 15px; margin: 0; font-weight: 600;">{task_title}</p>
-                <p style="color: #1e40af; font-size: 14px; margin: 8px 0 0 0;">{task_description}</p>
+                <p style="color: #1e40af; font-size: 14px; margin: 8px 0 0 0; white-space: pre-wrap;">{task_description_html}</p>
             </div>
             <div style="text-align: center; margin: 30px 0;">
                 <a href="{approval_url}" style="display: inline-block; background-color: #2563eb; background: linear-gradient(135deg, #3b82f6, #2563eb); color: #ffffff; text-decoration: none; padding: 14px 32px; border-radius: 8px; font-weight: 600; font-size: 16px;">Review &amp; Approve Scope</a>

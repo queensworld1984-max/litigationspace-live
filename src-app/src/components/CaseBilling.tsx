@@ -157,7 +157,7 @@ function ContractFields({ form, set }: { form: CtrForm; set: React.Dispatch<Reac
         <input style={inp} value={form.payment_link} onChange={e => set(p => ({ ...p, payment_link: e.target.value }))} placeholder="https://pay.example.com/..." />
       </Field>
       <Field label="Description / Notes">
-        <textarea style={{ ...inp, minHeight: 60, resize: 'vertical' }} value={form.description} onChange={e => set(p => ({ ...p, description: e.target.value }))} placeholder="Contract details, scope of work..." />
+        <textarea style={{ ...inp, minHeight: 260, resize: 'vertical' }} value={form.description} onChange={e => set(p => ({ ...p, description: e.target.value }))} placeholder="Contract details, scope of work..." />
       </Field>
     </div>
   )
