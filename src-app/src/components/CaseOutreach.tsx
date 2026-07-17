@@ -948,6 +948,13 @@ export default function CaseOutreach({ caseId, onLoad }: Props) {
         ? 'Select the PEO Authorization document for a PEO Authorization campaign.'
         : 'Select at least one document for a Document Execution Request campaign.'); return
     }
+    // These three fill directly into the sent letter (which quarters, which fee %) —
+    // left blank, the letter goes out with dangling "for ;" sentences, which is
+    // exactly what got a real campaign rejected by the approver.
+    if (campForm.campaign_type === 'document_execution_request' &&
+        (!campForm.filed_quarters.trim() || !campForm.additional_quarter.trim() || !campForm.contingency_fee_text.trim())) {
+      setCampError('Quarters already filed, additional quarter identified, and contingency fee are all required for a Document Execution Request campaign — they are inserted directly into the letter.'); return
+    }
     setCampSaving(true); setCampError('')
     try {
       await axios.post(`/api/outreach/cases/${caseId}/campaigns`, campForm, { headers: jHdr() })
@@ -2165,12 +2172,13 @@ export default function CaseOutreach({ caseId, onLoad }: Props) {
                   </div>
                   {campForm.campaign_type === 'document_execution_request' && (
                     <div style={{ marginTop: 10, paddingTop: 10, borderTop: `1px solid ${BD}` }}>
-                      <label style={lbl}>Quarters already filed (validated by us)</label>
+                      <label style={lbl}>Quarters already filed (validated by us) *</label>
                       <input style={inp} value={campForm.filed_quarters} onChange={e => setCampForm(p => ({ ...p, filed_quarters: e.target.value }))} placeholder="e.g. the second and third quarters of 2021" />
-                      <label style={{ ...lbl, marginTop: 8 }}>Additional quarter identified</label>
+                      <label style={{ ...lbl, marginTop: 8 }}>Additional quarter identified *</label>
                       <input style={inp} value={campForm.additional_quarter} onChange={e => setCampForm(p => ({ ...p, additional_quarter: e.target.value }))} placeholder="e.g. the first quarter of 2021" />
-                      <label style={{ ...lbl, marginTop: 8 }}>Contingency fee</label>
-                      <input style={inp} value={campForm.contingency_fee_text} onChange={e => setCampForm(p => ({ ...p, contingency_fee_text: e.target.value }))} placeholder="e.g. thirty percent (30%)" />
+                      <label style={{ ...lbl, marginTop: 8 }}>Contingency fee *</label>
+                      <input style={inp} value={campForm.contingency_fee_text} onChange={e => setCampForm(p => ({ ...p, contingency_fee_text: e.target.value }))} placeholder="e.g. 30%" />
+                      <div style={{ marginTop: 6, fontSize: '0.7rem', color: T3 }}>These three are inserted directly into the letter — a blank field ships as a broken sentence (e.g. &ldquo;filed for ;&rdquo;).</div>
                     </div>
                   )}
                 </div>

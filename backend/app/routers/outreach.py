@@ -4311,6 +4311,15 @@ async def create_campaign(case_id: str, req: CampaignCreate, current_user: dict 
         if campaign_type in _SIGNABLE_CAMPAIGN_TYPES and not req.document_ids:
             label = "Document Execution Request" if campaign_type == "document_execution_request" else "PEO Authorization"
             raise HTTPException(400, f"document_ids is required for a {label} campaign")
+        # These three substitute directly into the tenant's saved letter — left
+        # blank, the letter ships with dangling "for ;" sentences. A prior
+        # campaign went out this way and was rejected by the client's approver
+        # for exactly that reason, so this is enforced server-side, not just
+        # in the form.
+        if campaign_type == "document_execution_request" and not (
+            (req.filed_quarters or "").strip() and (req.additional_quarter or "").strip() and (req.contingency_fee_text or "").strip()
+        ):
+            raise HTTPException(400, "filed_quarters, additional_quarter, and contingency_fee_text are all required for a Document Execution Request campaign")
 
         # Follow-up stage template_types for each signable-document wording
         # track — stage 1 always shares its template_type with campaign_type.
