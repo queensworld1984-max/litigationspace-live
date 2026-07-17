@@ -108,6 +108,7 @@ const TEMPLATE_CATEGORIES = [
 const TEMPLATES = [
   { key: 'outstanding_amount',        name: 'Outstanding Amount',                  day: 0,  color: '#f59e0b', desc: 'Recipient owes money under the ERC Consulting Services Agreement. 14-day deadline.', category: 'erc_agreement', needsAmount: true, needsCustomBody: false, needsDocuments: false },
   { key: 'document_execution_request', name: 'Request to Execute Required Document', day: 0, color: '#d97706', desc: 'Recipient failed to execute a required document (Form 8821, Settlement Agreement, Affidavit, Release, etc.) — attaches secure sign links automatically.', category: 'erc_agreement', needsAmount: false, needsCustomBody: false, needsDocuments: true },
+  { key: 'peo_authorization', name: 'PEO Authorization', day: 0, color: '#7c3aed', desc: 'Recipient’s payroll may be administered through a PEO — requests PEO information and an executed authorization for the PEO to communicate directly with the firm.', category: 'erc_agreement', needsAmount: false, needsCustomBody: false, needsDocuments: true },
   { key: 'initial_demand',   name: '1. Initial Good Faith Demand',               day: 0,  color: '#3b82f6', desc: 'First formal notice. Professional tone. 14-day deadline.', category: 'debt_collection', needsAmount: true, needsCustomBody: false, needsDocuments: false },
   { key: 'follow_up',        name: '2. Follow-Up Reminder',                      day: 14, color: '#f59e0b', desc: 'Second notice escalating urgency. 7-day deadline.', category: 'debt_collection', needsAmount: true, needsCustomBody: false, needsDocuments: false },
   { key: 'follow_up_2',      name: '3. Escalation Warning',                      day: 28, color: '#ef4444', desc: 'Third notice warning of legal proceedings. 5-day deadline.', category: 'debt_collection', needsAmount: true, needsCustomBody: false, needsDocuments: false },
@@ -281,7 +282,7 @@ const SUB_TABS: { id: SubTab; label: string }[] = [
 // ── Empty form presets ────────────────────────────────────────────────────────
 const EMPTY_CT  = { name: '', email: '', phone: '', company: '', party_role: '', contact_title: '', amount_owed: '', currency: 'USD', notes: '', address_line1: '', address_line2: '', city: '', state: '', postal_code: '', country: '' }
 const EMPTY_SIG = { name: '', sender_name: '', sender_title: '', sender_email: '', sender_phone: '', company_name: '', logo_url: '', website_url: '', address_line1: '', address_line2: '', city: '', state: '', postal_code: '', country: '', accent_color: '#C8992A', layout: 'horizontal', is_default: false as boolean, custom_line: '' }
-const EMPTY_CAMP = { contact_ids: [] as string[], firm_name: '', firm_address: '', firm_phone: '', from_name: '', additional_notes: '', litigation_type: 'Demand for Arbitration', campaign_type: 'outstanding_amount' as 'outstanding_amount' | 'document_execution_request', document_ids: [] as string[], schedule_day_1: 0, schedule_day_2: 14, schedule_day_3: 28, schedule_day_4: 42, schedule_day_5: 49, filed_quarters: '', additional_quarter: '', contingency_fee_text: '' }
+const EMPTY_CAMP = { contact_ids: [] as string[], firm_name: '', firm_address: '', firm_phone: '', from_name: '', additional_notes: '', litigation_type: 'Demand for Arbitration', campaign_type: 'outstanding_amount' as 'outstanding_amount' | 'document_execution_request' | 'peo_authorization', document_ids: [] as string[], schedule_day_1: 0, schedule_day_2: 14, schedule_day_3: 28, schedule_day_4: 42, schedule_day_5: 49, filed_quarters: '', additional_quarter: '', contingency_fee_text: '' }
 
 // ── Main Component ────────────────────────────────────────────────────────────
 interface Props { caseId: string; onLoad?: (n: number) => void }
@@ -942,8 +943,10 @@ export default function CaseOutreach({ caseId, onLoad }: Props) {
   async function createCampaign() {
     const hasDefaultSig = signatures.some(s => s.is_default === 1 || s.is_default === true)
     if (!hasDefaultSig || campForm.contact_ids.length === 0) return
-    if (campForm.campaign_type === 'document_execution_request' && campForm.document_ids.length === 0) {
-      setCampError('Select at least one document for a Document Execution Request campaign.'); return
+    if ((campForm.campaign_type === 'document_execution_request' || campForm.campaign_type === 'peo_authorization') && campForm.document_ids.length === 0) {
+      setCampError(campForm.campaign_type === 'peo_authorization'
+        ? 'Select the PEO Authorization document for a PEO Authorization campaign.'
+        : 'Select at least one document for a Document Execution Request campaign.'); return
     }
     setCampSaving(true); setCampError('')
     try {
@@ -2127,10 +2130,14 @@ export default function CaseOutreach({ caseId, onLoad }: Props) {
                   style={{ flex: 1, padding: '10px', borderRadius: 8, border: `2px solid ${campForm.campaign_type === 'document_execution_request' ? '#d97706' : BD}`, background: campForm.campaign_type === 'document_execution_request' ? 'rgba(217,119,6,0.1)' : INPBG, color: campForm.campaign_type === 'document_execution_request' ? '#d97706' : T2, fontSize: '0.8rem', fontWeight: 700, cursor: 'pointer' }}>
                   Request to Execute Required Document
                 </button>
+                <button type="button" onClick={() => setCampForm(p => ({ ...p, campaign_type: 'peo_authorization' }))}
+                  style={{ flex: 1, padding: '10px', borderRadius: 8, border: `2px solid ${campForm.campaign_type === 'peo_authorization' ? '#7c3aed' : BD}`, background: campForm.campaign_type === 'peo_authorization' ? 'rgba(124,58,237,0.1)' : INPBG, color: campForm.campaign_type === 'peo_authorization' ? '#7c3aed' : T2, fontSize: '0.8rem', fontWeight: 700, cursor: 'pointer' }}>
+                  PEO Authorization
+                </button>
               </div>
-              {campForm.campaign_type === 'document_execution_request' && (
+              {(campForm.campaign_type === 'document_execution_request' || campForm.campaign_type === 'peo_authorization') && (
                 <div style={{ marginTop: 10, padding: '10px 12px', background: INPBG, border: `1px solid ${BD}`, borderRadius: 8 }}>
-                  <label style={lbl}>Document(s) — a sign link is created once per recipient and carried through all 5 stages</label>
+                  <label style={lbl}>{campForm.campaign_type === 'peo_authorization' ? 'PEO Authorization document — a sign link is created once per recipient and carried through all 5 stages' : 'Document(s) — a sign link is created once per recipient and carried through all 5 stages'}</label>
                   {caseDocs.length === 0 ? (
                     <p style={{ color: T3, fontSize: '0.78rem', margin: '6px 0 0' }}>Loading case documents…</p>
                   ) : (
@@ -2156,14 +2163,16 @@ export default function CaseOutreach({ caseId, onLoad }: Props) {
                     </label>
                     {docUploadError && <div style={{ color: '#f87171', fontSize: '0.72rem', marginTop: 6 }}>{docUploadError}</div>}
                   </div>
-                  <div style={{ marginTop: 10, paddingTop: 10, borderTop: `1px solid ${BD}` }}>
-                    <label style={lbl}>Quarters already filed (validated by us)</label>
-                    <input style={inp} value={campForm.filed_quarters} onChange={e => setCampForm(p => ({ ...p, filed_quarters: e.target.value }))} placeholder="e.g. the second and third quarters of 2021" />
-                    <label style={{ ...lbl, marginTop: 8 }}>Additional quarter identified</label>
-                    <input style={inp} value={campForm.additional_quarter} onChange={e => setCampForm(p => ({ ...p, additional_quarter: e.target.value }))} placeholder="e.g. the first quarter of 2021" />
-                    <label style={{ ...lbl, marginTop: 8 }}>Contingency fee</label>
-                    <input style={inp} value={campForm.contingency_fee_text} onChange={e => setCampForm(p => ({ ...p, contingency_fee_text: e.target.value }))} placeholder="e.g. thirty percent (30%)" />
-                  </div>
+                  {campForm.campaign_type === 'document_execution_request' && (
+                    <div style={{ marginTop: 10, paddingTop: 10, borderTop: `1px solid ${BD}` }}>
+                      <label style={lbl}>Quarters already filed (validated by us)</label>
+                      <input style={inp} value={campForm.filed_quarters} onChange={e => setCampForm(p => ({ ...p, filed_quarters: e.target.value }))} placeholder="e.g. the second and third quarters of 2021" />
+                      <label style={{ ...lbl, marginTop: 8 }}>Additional quarter identified</label>
+                      <input style={inp} value={campForm.additional_quarter} onChange={e => setCampForm(p => ({ ...p, additional_quarter: e.target.value }))} placeholder="e.g. the first quarter of 2021" />
+                      <label style={{ ...lbl, marginTop: 8 }}>Contingency fee</label>
+                      <input style={inp} value={campForm.contingency_fee_text} onChange={e => setCampForm(p => ({ ...p, contingency_fee_text: e.target.value }))} placeholder="e.g. thirty percent (30%)" />
+                    </div>
+                  )}
                 </div>
               )}
             </div>
@@ -2186,7 +2195,7 @@ export default function CaseOutreach({ caseId, onLoad }: Props) {
                   {LITIGATION_TYPES.map(t => <option key={t} value={t}>{t}</option>)}
                 </select>
               </div>
-              {campForm.campaign_type !== 'document_execution_request' && (
+              {campForm.campaign_type === 'outstanding_amount' && (
                 <div style={{ gridColumn: '1/-1' }}><label style={lbl}>Additional Notes</label><textarea rows={2} style={{ ...inp, resize: 'vertical' }} value={campForm.additional_notes} onChange={e => setCampForm(p => ({ ...p, additional_notes: e.target.value }))} /></div>
               )}
             </div>

@@ -698,6 +698,358 @@ def _template_document_execution_notice_of_intent(
     return subject, html
 
 
+def _template_peo_authorization_request(
+    contact_name: str, document_name: str, document_links: list,
+    firm_name: str, sender_name: str, response_deadline_days: int = 10,
+    case_title: str = "", case_number: str = "",
+    recipient_address: str = "", client_name: str = "", logo_url: str = "",
+) -> tuple:
+    """Returns (subject, html_body) for the "PEO Authorization" template —
+    used when a client's payroll may have been administered through a
+    Professional Employer Organization and the firm needs the client to
+    identify the PEO and authorize it to communicate directly."""
+    today = datetime.now(timezone.utc).strftime("%B %d, %Y")
+    ref_line = ""
+    if case_number:
+        ref_line = f'<p style="color: #374151; font-size: 14px; margin: 0 0 4px 0;"><strong>Re:</strong> {case_title} (Ref: {case_number})</p>'
+    elif case_title:
+        ref_line = f'<p style="color: #374151; font-size: 14px; margin: 0 0 4px 0;"><strong>Re:</strong> {case_title}</p>'
+
+    subject = "PEO Authorization Required — Employee Retention Credit Claim"
+    html = _build_email_header(firm_name, "Attorneys & Counselors at Law", logo_url) + f"""
+        <div style="padding: 30px 40px;">
+            <p style="color: #6b7280; font-size: 13px; margin: 0 0 20px 0;">{today}</p>
+            {ref_line}
+            {_attn_block(contact_name, recipient_address)}
+
+            <p style="color: #374151; font-size: 14px; line-height: 1.7;">Dear {contact_name},</p>
+
+            <p style="color: #374151; font-size: 14px; line-height: 1.7;">
+                {firm_name} performed ERC consulting services on your behalf, including evaluating your eligibility for the
+                Employee Retention Credit (&ldquo;ERC&rdquo;) and preparing supporting documentation for your claim.
+            </p>
+
+            <p style="color: #374151; font-size: 14px; line-height: 1.7;">
+                Upon information and belief, your company may have utilized a Professional Employer Organization (&ldquo;PEO&rdquo;)
+                to administer payroll and file its federal employment tax returns. If so, {firm_name} has been unable to
+                determine whether your ERC claim has been filed, whether additional information is required, or whether
+                any ERC refund, credit, or other benefit has been received.
+            </p>
+
+            <div style="background: #fef3c7; border: 2px solid #f59e0b; border-radius: 8px; padding: 20px; margin: 24px 0; text-align: center;">
+                <p style="color: #92400e; font-size: 12px; text-transform: uppercase; letter-spacing: 1px; margin: 0 0 8px 0; font-weight: 600;">Required Authorization</p>
+                <p style="color: #78350f; font-size: 20px; font-weight: 700; margin: 0;">{document_name}</p>
+            </div>
+
+            <p style="color: #374151; font-size: 14px; line-height: 1.7;">
+                Please provide your PEO's information and execute the enclosed PEO Authorization within {response_deadline_days} days
+                from the date of this notice, so that your PEO may communicate directly with {firm_name} regarding your ERC claim.
+            </p>
+
+            {_build_document_link_buttons(document_links)}
+
+            <p style="color: #374151; font-size: 14px; line-height: 1.7;">
+                Your continued failure to cooperate prevents {firm_name} from determining the status of your ERC claim and may
+                result in {firm_name} pursuing all remedies available under the Agreement.
+            </p>
+
+            <p style="color: #374151; font-size: 14px; line-height: 1.7; margin-top: 24px;">Respectfully,</p>
+            <p style="color: #1e3a5f; font-size: 14px; font-weight: 600; margin: 4px 0 0 0;">{sender_name}</p>
+            <p style="color: #6b7280; font-size: 13px; margin: 2px 0 0 0;">{firm_name}</p>
+            {_on_behalf_of_line(client_name)}
+        </div>
+    """
+
+    return subject, html
+
+
+def _template_peo_authorization_followup(
+    contact_name: str, document_name: str, document_links: list,
+    firm_name: str, sender_name: str, response_deadline_days: int = 7,
+    case_title: str = "", case_number: str = "", attempt_number: int = 2,
+    recipient_address: str = "", client_name: str = "", logo_url: str = "",
+) -> tuple:
+    """Returns (subject, html_body) for PEO Authorization Follow-Up — stage 2
+    of the PEO authorization escalation sequence."""
+    today = datetime.now(timezone.utc).strftime("%B %d, %Y")
+
+    subject = f"Follow-Up: PEO Authorization Not Yet Received - {firm_name}"
+    html = _build_email_header(firm_name, "Attorneys & Counselors at Law", logo_url) + f"""
+        <div style="padding: 30px 40px;">
+            <p style="color: #6b7280; font-size: 13px; margin: 0 0 20px 0;">{today}</p>
+            {_attn_block(contact_name, recipient_address)}
+
+            <div style="background: #fef2f2; border-left: 4px solid #ef4444; padding: 16px 20px; margin: 0 0 24px 0; border-radius: 0 8px 8px 0;">
+                <p style="color: #991b1b; font-size: 13px; font-weight: 700; margin: 0; text-transform: uppercase; letter-spacing: 0.5px;">
+                    FOLLOW-UP NOTICE &mdash; ATTEMPT #{attempt_number}
+                </p>
+            </div>
+
+            <p style="color: #374151; font-size: 14px; line-height: 1.7;">Dear {contact_name},</p>
+
+            <p style="color: #374151; font-size: 14px; line-height: 1.7;">
+                This letter serves as a follow-up to our previous correspondence regarding the required PEO Authorization below,
+                which remains outstanding. As of the date of this letter, we have not received your PEO information, the
+                executed authorization, or a response to our prior communication.
+            </p>
+
+            <div style="background: #fef3c7; border: 2px solid #f59e0b; border-radius: 8px; padding: 20px; margin: 24px 0; text-align: center;">
+                <p style="color: #92400e; font-size: 12px; text-transform: uppercase; letter-spacing: 1px; margin: 0 0 8px 0; font-weight: 600;">Required Authorization</p>
+                <p style="color: #78350f; font-size: 20px; font-weight: 700; margin: 0;">{document_name}</p>
+            </div>
+
+            <p style="color: #374151; font-size: 14px; line-height: 1.7;">
+                We urge you to treat this matter with urgency. You have <strong>{response_deadline_days} days</strong> from
+                receipt of this notice to provide your PEO information and execute the authorization, or contact our office
+                to discuss any concerns.
+            </p>
+
+            {_build_document_link_buttons(document_links)}
+
+            <p style="color: #374151; font-size: 14px; line-height: 1.7;">
+                Failure to respond may result in referral to legal counsel for arbitration or litigation without further notice,
+                which may include additional costs and fees.
+            </p>
+
+            <p style="color: #374151; font-size: 14px; line-height: 1.7; margin-top: 24px;">Respectfully,</p>
+            <p style="color: #1e3a5f; font-size: 14px; font-weight: 600; margin: 4px 0 0 0;">{sender_name}</p>
+            <p style="color: #6b7280; font-size: 13px; margin: 2px 0 0 0;">{firm_name}</p>
+            {_on_behalf_of_line(client_name)}
+        </div>
+    """
+
+    return subject, html
+
+
+def _template_peo_authorization_escalation(
+    contact_name: str, document_name: str, document_links: list,
+    firm_name: str, sender_name: str, response_deadline_days: int = 5,
+    case_title: str = "", case_number: str = "", attempt_number: int = 3,
+    recipient_address: str = "", client_name: str = "", logo_url: str = "",
+) -> tuple:
+    """Returns (subject, html_body) for PEO Authorization Escalation Warning —
+    stage 3."""
+    today = datetime.now(timezone.utc).strftime("%B %d, %Y")
+
+    subject = f"URGENT: Escalation Warning - PEO Authorization Outstanding - {firm_name}"
+    html = _build_email_header(firm_name, "Attorneys & Counselors at Law", logo_url) + f"""
+        <div style="padding: 30px 40px;">
+            <p style="color: #6b7280; font-size: 13px; margin: 0 0 20px 0;">{today}</p>
+            {_attn_block(contact_name, recipient_address)}
+
+            <div style="background: #fef2f2; border: 2px solid #ef4444; padding: 16px 24px; margin: 0 0 24px 0; border-radius: 8px;">
+                <p style="color: #991b1b; font-size: 14px; font-weight: 700; margin: 0; text-transform: uppercase; letter-spacing: 0.5px;">
+                    &#9888; ESCALATION WARNING &mdash; ATTEMPT #{attempt_number}
+                </p>
+                <p style="color: #991b1b; font-size: 12px; margin: 6px 0 0 0;">
+                    This matter is being reviewed for formal legal proceedings
+                </p>
+            </div>
+
+            <p style="color: #374151; font-size: 14px; line-height: 1.7;">Dear {contact_name},</p>
+
+            <p style="color: #374151; font-size: 14px; line-height: 1.7;">
+                We write with growing concern regarding the required PEO Authorization below, which remains outstanding. Despite our
+                previous <strong>{attempt_number - 1} communications</strong>, we have received no PEO information, executed
+                authorization, or response from you.
+            </p>
+
+            <div style="background: #fef3c7; border: 2px solid #f59e0b; border-radius: 8px; padding: 20px; margin: 24px 0; text-align: center;">
+                <p style="color: #92400e; font-size: 12px; text-transform: uppercase; letter-spacing: 1px; margin: 0 0 8px 0; font-weight: 600;">Required Authorization</p>
+                <p style="color: #78350f; font-size: 20px; font-weight: 700; margin: 0;">{document_name}</p>
+            </div>
+
+            <p style="color: #374151; font-size: 14px; line-height: 1.7;">
+                <strong>Please be advised that this matter has been escalated within our office.</strong>
+                If we do not receive your PEO information and the executed authorization, or a substantive response, within
+                <strong>{response_deadline_days} days</strong>, we will have no choice but to recommend
+                that {firm_name} initiate formal legal proceedings.
+            </p>
+
+            <p style="color: #374151; font-size: 14px; line-height: 1.7;">
+                Such proceedings would include seeking all remedies available under the Agreement, including attorney fees
+                and all costs of collection.
+            </p>
+
+            {_build_document_link_buttons(document_links)}
+
+            <div style="background: #eff6ff; border: 1px solid #bfdbfe; border-radius: 8px; padding: 20px; margin: 24px 0;">
+                <p style="color: #1e40af; font-size: 13px; font-weight: 600; margin: 0 0 8px 0;">LAST OPPORTUNITY</p>
+                <p style="color: #1e40af; font-size: 13px; margin: 0; line-height: 1.6;">
+                    This is your opportunity to resolve this matter before formal escalation.
+                    Please provide your PEO information and execute the authorization above, or contact our office immediately.
+                </p>
+            </div>
+
+            <p style="color: #374151; font-size: 14px; line-height: 1.7; margin-top: 24px;">Respectfully,</p>
+            <p style="color: #1e3a5f; font-size: 14px; font-weight: 600; margin: 4px 0 0 0;">{sender_name}</p>
+            <p style="color: #6b7280; font-size: 13px; margin: 2px 0 0 0;">{firm_name}</p>
+            {_on_behalf_of_line(client_name)}
+        </div>
+    """
+
+    return subject, html
+
+
+def _template_peo_authorization_final_notice(
+    contact_name: str, document_name: str, document_links: list,
+    firm_name: str, sender_name: str, response_deadline_days: int = 5,
+    case_title: str = "", case_number: str = "", total_attempts: int = 3,
+    recipient_address: str = "", client_name: str = "", logo_url: str = "",
+) -> tuple:
+    """Returns (subject, html_body) for PEO Authorization Final Notice — stage 4."""
+    today = datetime.now(timezone.utc).strftime("%B %d, %Y")
+
+    subject = f"FINAL NOTICE: PEO Authorization Outstanding Before Legal Action - {firm_name}"
+    html = _build_email_header(firm_name, "Attorneys & Counselors at Law", logo_url) + f"""
+        <div style="padding: 30px 40px;">
+            <p style="color: #6b7280; font-size: 13px; margin: 0 0 20px 0;">{today}</p>
+            {_attn_block(contact_name, recipient_address)}
+
+            <div style="background: #7f1d1d; padding: 16px 24px; margin: 0 0 24px 0; border-radius: 8px; text-align: center;">
+                <p style="color: #ffffff; font-size: 15px; font-weight: 700; margin: 0; text-transform: uppercase; letter-spacing: 1px;">
+                    FINAL NOTICE BEFORE LEGAL PROCEEDINGS
+                </p>
+            </div>
+
+            <p style="color: #374151; font-size: 14px; line-height: 1.7;">Dear {contact_name},</p>
+
+            <p style="color: #374151; font-size: 14px; line-height: 1.7;">
+                <strong>This is {firm_name}&rsquo;s final correspondence before initiating formal legal proceedings.</strong>
+            </p>
+
+            <p style="color: #374151; font-size: 14px; line-height: 1.7;">
+                {firm_name} has made <strong>{total_attempts} documented attempts</strong> to obtain your PEO information and the
+                executed authorization below. Each communication has been recorded and will serve as evidence of {firm_name}&rsquo;s
+                good faith efforts to resolve this matter amicably.
+            </p>
+
+            <div style="background: #fecaca; border: 2px solid #dc2626; border-radius: 8px; padding: 20px; margin: 24px 0; text-align: center;">
+                <p style="color: #991b1b; font-size: 12px; text-transform: uppercase; letter-spacing: 1px; margin: 0 0 8px 0; font-weight: 600;">Required Authorization</p>
+                <p style="color: #7f1d1d; font-size: 20px; font-weight: 700; margin: 0;">{document_name}</p>
+                <p style="color: #991b1b; font-size: 12px; margin: 8px 0 0 0;">Response required within {response_deadline_days} days</p>
+            </div>
+
+            <p style="color: #374151; font-size: 14px; line-height: 1.7;">
+                Unless we receive your PEO information and the executed authorization, or a written response proposing a
+                concrete resolution, within <strong>{response_deadline_days} days</strong> of this notice, {firm_name}
+                will proceed with the following:
+            </p>
+
+            <div style="background: #f9fafb; border: 1px solid #e5e7eb; border-radius: 8px; padding: 20px; margin: 16px 0;">
+                <ol style="color: #374151; font-size: 14px; line-height: 1.8; margin: 0; padding-left: 20px;">
+                    <li>Filing a formal <strong>Demand for Arbitration</strong> or initiating litigation proceedings</li>
+                    <li>Seeking recovery of all amounts due under the Agreement, plus <strong>accrued interest</strong></li>
+                    <li>Seeking recovery of all <strong>attorney fees and legal costs</strong></li>
+                    <li>Submitting this documented communication trail as evidence of good faith attempts</li>
+                </ol>
+            </div>
+
+            {_build_document_link_buttons(document_links)}
+
+            <p style="color: #374151; font-size: 14px; line-height: 1.7;">
+                We strongly urge you to respond immediately to avoid the additional expense and burden of formal legal
+                proceedings. This remains your final opportunity to resolve this matter without litigation.
+            </p>
+
+            <p style="color: #374151; font-size: 14px; line-height: 1.7; margin-top: 24px;">
+                <em>Govern yourself accordingly.</em>
+            </p>
+            <p style="color: #1e3a5f; font-size: 14px; font-weight: 600; margin: 16px 0 0 0;">{sender_name}</p>
+            <p style="color: #6b7280; font-size: 13px; margin: 2px 0 0 0;">{firm_name}</p>
+            {_on_behalf_of_line(client_name)}
+        </div>
+    """
+
+    return subject, html
+
+
+def _template_peo_authorization_notice_of_intent(
+    contact_name: str, document_name: str, document_links: list,
+    firm_name: str, sender_name: str, response_deadline_days: int = 5,
+    case_title: str = "", case_number: str = "", attempt_number: int = 4,
+    litigation_type: str = "Demand for Arbitration",
+    recipient_address: str = "", client_name: str = "", logo_url: str = "",
+) -> tuple:
+    """Returns (subject, html_body) for PEO Authorization Notice of Intent — stage 5."""
+    today = datetime.now(timezone.utc).strftime("%B %d, %Y")
+
+    subject = f"NOTICE OF INTENT TO INITIATE LEGAL PROCEEDINGS - {firm_name}"
+    html = _build_email_header(firm_name, "Attorneys & Counselors at Law", logo_url) + f"""
+        <div style="padding: 30px 40px;">
+            <p style="color: #6b7280; font-size: 13px; margin: 0 0 20px 0;">{today}</p>
+            {_attn_block(contact_name, recipient_address)}
+
+            <div style="background: #1e1b4b; border: 3px solid #4338ca; padding: 20px 28px; margin: 0 0 24px 0; border-radius: 8px;">
+                <p style="color: #e0e7ff; font-size: 16px; font-weight: 700; margin: 0; text-transform: uppercase; letter-spacing: 1px;">
+                    &#9878; NOTICE OF INTENT TO INITIATE LEGAL PROCEEDINGS
+                </p>
+                <p style="color: #c7d2fe; font-size: 12px; margin: 8px 0 0 0;">
+                    Type: {litigation_type} &bull; Reference: {case_number or case_title}
+                </p>
+            </div>
+
+            <p style="color: #374151; font-size: 14px; line-height: 1.7;">Dear {contact_name},</p>
+
+            <p style="color: #374151; font-size: 14px; line-height: 1.7;">
+                This letter serves as <strong>formal notice</strong> that, having exhausted all good-faith efforts
+                to obtain your PEO information and the executed authorization below, {firm_name} has instructed
+                us to proceed with <strong>{litigation_type}</strong>.
+            </p>
+
+            <div style="background: #fef3c7; border: 2px solid #f59e0b; border-radius: 8px; padding: 20px; margin: 24px 0; text-align: center;">
+                <p style="color: #92400e; font-size: 12px; text-transform: uppercase; letter-spacing: 1px; margin: 0 0 8px 0; font-weight: 600;">Required Authorization</p>
+                <p style="color: #78350f; font-size: 20px; font-weight: 700; margin: 0;">{document_name}</p>
+            </div>
+
+            <p style="color: #374151; font-size: 14px; line-height: 1.7;">
+                Over the course of {attempt_number} prior communications, we have attempted in good faith to
+                resolve this matter amicably. Despite these efforts, we have received no PEO information, no executed
+                authorization, and no indication of willingness to engage.
+            </p>
+
+            <div style="background: #fef2f2; border: 2px solid #dc2626; border-radius: 8px; padding: 20px; margin: 24px 0;">
+                <p style="color: #991b1b; font-size: 13px; font-weight: 700; margin: 0 0 8px 0; text-transform: uppercase;">FINAL OPPORTUNITY TO RESOLVE</p>
+                <p style="color: #991b1b; font-size: 13px; margin: 0; line-height: 1.6;">
+                    You have <strong>{response_deadline_days} calendar days</strong> from receipt of this notice
+                    to provide your PEO information and execute the authorization, or submit a written proposal for resolution.
+                    After this period, we will file a <strong>{litigation_type}</strong> without further notice.
+                </p>
+            </div>
+
+            <p style="color: #374151; font-size: 14px; line-height: 1.7; font-weight: 600;">
+                Upon filing, {firm_name} will seek recovery of:
+            </p>
+            <ul style="color: #374151; font-size: 14px; line-height: 2; padding-left: 20px;">
+                <li>All amounts and remedies available under the Agreement</li>
+                <li>Pre-judgment and post-judgment interest at the applicable statutory rate</li>
+                <li>All attorney fees and legal costs incurred</li>
+                <li>Filing fees, service fees, and all costs of collection</li>
+                <li>Any additional damages or remedies available under applicable law</li>
+            </ul>
+
+            {_build_document_link_buttons(document_links)}
+
+            <div style="background: #f0fdf4; border: 1px solid #86efac; border-radius: 8px; padding: 20px; margin: 24px 0;">
+                <p style="color: #166534; font-size: 13px; font-weight: 600; margin: 0 0 8px 0;">RESOLUTION REMAINS POSSIBLE</p>
+                <p style="color: #166534; font-size: 13px; margin: 0; line-height: 1.6;">
+                    We remain willing to discuss a resolution to avoid formal proceedings.
+                    Please provide your PEO information and execute the authorization above, or contact our office immediately to discuss.
+                </p>
+            </div>
+
+            <p style="color: #374151; font-size: 14px; line-height: 1.7; margin-top: 24px;">
+                <em>Govern yourself accordingly.</em>
+            </p>
+            <p style="color: #1e3a5f; font-size: 14px; font-weight: 600; margin: 16px 0 0 0;">{sender_name}</p>
+            <p style="color: #6b7280; font-size: 13px; margin: 2px 0 0 0;">{firm_name}</p>
+            {_on_behalf_of_line(client_name)}
+        </div>
+    """
+
+    return subject, html
+
+
 def _template_general_letter(
     contact_name: str, subject_line: str, body_text: str,
     firm_name: str, sender_name: str,
@@ -1348,6 +1700,20 @@ Govern yourself accordingly.
 
 This constitutes formal notice of intent to initiate legal proceedings pursuant to applicable law. All prior correspondence has been preserved and will be submitted as evidence of good-faith attempts to resolve this matter. This letter may be presented to the tribunal or court as evidence of compliance with pre-action protocol requirements.""",
     },
+    "peo_authorization": {
+        "subject": "PEO Authorization Required — Employee Retention Credit Claim",
+        "body": """ERTC Funding performed ERC consulting services on your behalf, including evaluating your eligibility for the Employee Retention Credit ("ERC") and preparing supporting documentation for your claim.
+
+Upon information and belief, your company may have utilized a Professional Employer Organization ("PEO") to administer payroll and file its federal employment tax returns. If so, ERTC Funding has been unable to determine whether your ERC claim has been filed, whether additional information is required, or whether any ERC refund, credit, or other benefit has been received.
+
+[Document Name]
+
+Please provide your PEO's information and execute the enclosed PEO Authorization within [Response Deadline Days] days from the date of this notice, so that your PEO may communicate directly with ERTC Funding regarding your ERC claim.
+
+[Document Links]
+
+Your continued failure to cooperate prevents ERTC Funding from determining the status of your ERC claim and may result in ERTC Funding pursuing all remedies available under the Agreement.""",
+    },
     "initial_demand": {
         "subject": "Important: Outstanding Balance Notice - [Firm Name]",
         "body": """We write on behalf of our client regarding the outstanding balance described below, currently due and owing. Despite previous communications, this amount remains unpaid.
@@ -1620,7 +1986,7 @@ def _get_custom_template(db, tenant_id: str, template_type: str):
 # which is already free-typed per send (needsCustomBody) and has no fixed
 # default wording to override.
 _PLAINTEXT_TEMPLATE_TYPES = {
-    "outstanding_amount", "document_execution_request",
+    "outstanding_amount", "document_execution_request", "peo_authorization",
     "initial_demand", "follow_up", "follow_up_2", "final_notice", "notice_of_intent",
     "settlement_offer",
 }
@@ -2082,7 +2448,7 @@ async def bulk_send_template(case_id: str, req: BulkEmailRequest, current_user: 
             # Generate from template
             amount_str = f"{currency} {amount:,.2f}" if amount else "the outstanding balance"
             used_advanced_html = False
-            if req.template_type == "document_execution_request":
+            if req.template_type in ("document_execution_request", "peo_authorization"):
                 document_links = []
                 document_names = []
                 for doc_id in (req.document_ids or []):
@@ -2121,7 +2487,7 @@ async def bulk_send_template(case_id: str, req: BulkEmailRequest, current_user: 
                     used_advanced_html = True
                 else:
                     subject, html = _render_plaintext_template(
-                        "document_execution_request", tokens, contact["name"], sender_name, firm_name,
+                        req.template_type, tokens, contact["name"], sender_name, firm_name,
                         client_name=client_name, recipient_address=recipient_address, case_title=case_title,
                         case_number=case_number, logo_url=logo_url, document_links=document_links,
                         custom_subject=custom_subject_tpl, custom_body=custom_body_tpl,
@@ -2155,7 +2521,7 @@ async def bulk_send_template(case_id: str, req: BulkEmailRequest, current_user: 
 
             if not used_advanced_html and req.template_type in ("initial_demand", "follow_up", "follow_up_2", "final_notice",
                                       "general_letter", "settlement_offer", "outstanding_amount",
-                                      "document_execution_request"):
+                                      "document_execution_request", "peo_authorization"):
                 # Signature, then footer last — footer's own markup is what
                 # closes the wrapper div _build_email_header left open, so it
                 # must come after the signature, not before it. Skipped
@@ -2984,7 +3350,7 @@ async def preview_template(req: BulkEmailRequest, current_user: dict = Depends(g
         with get_db() as db:
             custom_row = _get_custom_template(db, tenant_id, req.template_type)
 
-    if req.template_type == "document_execution_request":
+    if req.template_type in ("document_execution_request", "peo_authorization"):
         # Real, tokenized links only when a real contact is selected — a
         # generic preview (no contact chosen yet) shows a non-functional
         # sample button instead of minting real signature requests.
@@ -3027,7 +3393,7 @@ async def preview_template(req: BulkEmailRequest, current_user: dict = Depends(g
             html = _render_custom_html_template(custom_row["custom_html"], adv_tokens, document_links)
             return {"subject": subject, "html": html}
         subject, html = _render_plaintext_template(
-            "document_execution_request", tokens, contact_name, sender_name, firm_name,
+            req.template_type, tokens, contact_name, sender_name, firm_name,
             client_name=client_name, recipient_address=recipient_address, case_title=case_title,
             logo_url=logo_url, document_links=document_links,
             custom_subject=(custom_row["custom_subject"] if custom_row else None),
@@ -3057,7 +3423,8 @@ async def preview_template(req: BulkEmailRequest, current_user: dict = Depends(g
         html = req.custom_body or "<p>Custom email content</p>"
 
     if req.template_type in ("initial_demand", "follow_up", "follow_up_2", "final_notice", "notice_of_intent",
-                              "general_letter", "settlement_offer", "outstanding_amount", "document_execution_request"):
+                              "general_letter", "settlement_offer", "outstanding_amount", "document_execution_request",
+                              "peo_authorization"):
         # Signature, then footer last — footer's own markup is what closes
         # the wrapper div _build_email_header left open, so it must come
         # after the signature, not before it.
@@ -3935,25 +4302,43 @@ async def create_campaign(case_id: str, req: CampaignCreate, current_user: dict 
         sig_sender_name = (default_sig_row["sender_name"] or "").strip() if default_sig_row else ""
         sender_name = req.from_name or sig_sender_name or (user_row["full_name"] if user_row else "Attorney")
 
-        campaign_type = req.campaign_type if req.campaign_type in ("outstanding_amount", "document_execution_request") else "outstanding_amount"
-        if campaign_type == "document_execution_request" and not req.document_ids:
-            raise HTTPException(400, "document_ids is required for a Document Execution Request campaign")
+        campaign_type = req.campaign_type if req.campaign_type in (
+            "outstanding_amount", "document_execution_request", "peo_authorization"
+        ) else "outstanding_amount"
+        # Both wording tracks below need a signable document staged first —
+        # the letter itself asks the recipient to review & sign it.
+        _SIGNABLE_CAMPAIGN_TYPES = ("document_execution_request", "peo_authorization")
+        if campaign_type in _SIGNABLE_CAMPAIGN_TYPES and not req.document_ids:
+            label = "Document Execution Request" if campaign_type == "document_execution_request" else "PEO Authorization"
+            raise HTTPException(400, f"document_ids is required for a {label} campaign")
 
-        # Stage 1 (outstanding_amount / document_execution_request) can have
-        # a saved plain-text or advanced-HTML override, same as the
-        # Templates tab. Stages 2-5 of a document-execution campaign can
-        # also have a saved advanced-HTML override (no Edit UI yet — set via
-        # the same /template-custom API) so the whole 5-stage sequence can
-        # share one consistent document design; falls back to the fixed
-        # built-in wording otherwise.
+        # Follow-up stage template_types for each signable-document wording
+        # track — stage 1 always shares its template_type with campaign_type.
+        _FOLLOWUP_STAGE_TYPES = {
+            "document_execution_request": (
+                "document_execution_followup", "document_execution_escalation",
+                "document_execution_final_notice", "document_execution_notice_of_intent",
+            ),
+            "peo_authorization": (
+                "peo_authorization_followup", "peo_authorization_escalation",
+                "peo_authorization_final_notice", "peo_authorization_notice_of_intent",
+            ),
+        }
+
+        # Stage 1 (outstanding_amount / document_execution_request /
+        # peo_authorization) can have a saved plain-text or advanced-HTML
+        # override, same as the Templates tab. Stages 2-5 of a signable-
+        # document campaign can also have a saved advanced-HTML override (no
+        # Edit UI yet — set via the same /template-custom API) so the whole
+        # 5-stage sequence can share one consistent document design; falls
+        # back to the fixed built-in wording otherwise.
         stage1_custom = _get_custom_template(db, tenant_id, campaign_type)
         stage1_custom_subject = stage1_custom["custom_subject"] if stage1_custom else None
         stage1_custom_body = stage1_custom["custom_body"] if stage1_custom else None
         doc_exec_custom = {
             t: _get_custom_template(db, tenant_id, t)
-            for t in ("document_execution_followup", "document_execution_escalation",
-                      "document_execution_final_notice", "document_execution_notice_of_intent")
-        } if campaign_type == "document_execution_request" else {}
+            for t in _FOLLOWUP_STAGE_TYPES.get(campaign_type, ())
+        } if campaign_type in _FOLLOWUP_STAGE_TYPES else {}
 
         campaign_id = generate_id()
         db.execute(
@@ -3978,6 +4363,14 @@ async def create_campaign(case_id: str, req: CampaignCreate, current_user: dict 
                 ("document_execution_escalation", req.schedule_day_3, _template_document_execution_escalation),
                 ("document_execution_final_notice", req.schedule_day_4, _template_document_execution_final_notice),
                 ("document_execution_notice_of_intent", req.schedule_day_5, _template_document_execution_notice_of_intent),
+            ]
+        elif campaign_type == "peo_authorization":
+            templates = [
+                ("peo_authorization", req.schedule_day_1, _template_peo_authorization_request),
+                ("peo_authorization_followup", req.schedule_day_2, _template_peo_authorization_followup),
+                ("peo_authorization_escalation", req.schedule_day_3, _template_peo_authorization_escalation),
+                ("peo_authorization_final_notice", req.schedule_day_4, _template_peo_authorization_final_notice),
+                ("peo_authorization_notice_of_intent", req.schedule_day_5, _template_peo_authorization_notice_of_intent),
             ]
         else:
             # Stage 1 uses the exact "Outstanding Amount" wording; stages 2-5
@@ -4014,7 +4407,7 @@ async def create_campaign(case_id: str, req: CampaignCreate, current_user: dict 
             # request each stage.
             document_links = []
             document_names = []
-            if campaign_type == "document_execution_request":
+            if campaign_type in _SIGNABLE_CAMPAIGN_TYPES:
                 for doc_id in req.document_ids:
                     doc_row = db.execute(
                         "SELECT * FROM documents WHERE id = ? AND tenant_id = ?", (doc_id, tenant_id)
@@ -4035,8 +4428,8 @@ async def create_campaign(case_id: str, req: CampaignCreate, current_user: dict 
 
             for step_num, (tpl_type, send_day, tpl_func) in enumerate(templates, 1):
                 used_advanced_html = False
-                if campaign_type == "document_execution_request":
-                    if tpl_type == "document_execution_request":
+                if campaign_type in _SIGNABLE_CAMPAIGN_TYPES:
+                    if tpl_type == campaign_type:
                         tokens = _build_plaintext_tokens(
                             firm_name=firm_name, sender_name=sender_name, client_name=client_name,
                             case_title=case_title, response_deadline_days=14, firm_phone=firm_phone,
@@ -4058,17 +4451,22 @@ async def create_campaign(case_id: str, req: CampaignCreate, current_user: dict 
                             used_advanced_html = True
                         else:
                             subject, html = _render_plaintext_template(
-                                "document_execution_request", tokens, contact["name"], sender_name, firm_name,
+                                campaign_type, tokens, contact["name"], sender_name, firm_name,
                                 client_name=client_name, recipient_address=recipient_address, case_title=case_title,
                                 case_number=case_number, logo_url=logo_url, document_links=document_links,
                                 custom_subject=stage1_custom_subject, custom_body=stage1_custom_body,
                             )
-                    elif tpl_type in ("document_execution_followup", "document_execution_escalation",
-                                      "document_execution_final_notice", "document_execution_notice_of_intent"):
-                        stage_deadline = {"document_execution_followup": 7, "document_execution_escalation": 5,
-                                           "document_execution_final_notice": 5, "document_execution_notice_of_intent": 5}[tpl_type]
-                        stage_attempt = {"document_execution_followup": 2, "document_execution_escalation": 3,
-                                          "document_execution_final_notice": 3, "document_execution_notice_of_intent": 4}[tpl_type]
+                    elif tpl_type in _FOLLOWUP_STAGE_TYPES.get(campaign_type, ()):
+                        _stage_deadlines = {"document_execution_followup": 7, "document_execution_escalation": 5,
+                                             "document_execution_final_notice": 5, "document_execution_notice_of_intent": 5,
+                                             "peo_authorization_followup": 7, "peo_authorization_escalation": 5,
+                                             "peo_authorization_final_notice": 5, "peo_authorization_notice_of_intent": 5}
+                        _stage_attempts = {"document_execution_followup": 2, "document_execution_escalation": 3,
+                                            "document_execution_final_notice": 3, "document_execution_notice_of_intent": 4,
+                                            "peo_authorization_followup": 2, "peo_authorization_escalation": 3,
+                                            "peo_authorization_final_notice": 3, "peo_authorization_notice_of_intent": 4}
+                        stage_deadline = _stage_deadlines[tpl_type]
+                        stage_attempt = _stage_attempts[tpl_type]
                         custom_row = doc_exec_custom.get(tpl_type)
                         if custom_row and custom_row["custom_html"]:
                             tokens = _build_plaintext_tokens(
@@ -4087,7 +4485,7 @@ async def create_campaign(case_id: str, req: CampaignCreate, current_user: dict 
                             subject = _substitute_tokens(custom_row["custom_subject"] or "", adv_tokens)
                             html = _render_custom_html_template(custom_row["custom_html"], adv_tokens, document_links)
                             used_advanced_html = True
-                        elif tpl_type == "document_execution_notice_of_intent":
+                        elif tpl_type in ("document_execution_notice_of_intent", "peo_authorization_notice_of_intent"):
                             subject, html = tpl_func(
                                 contact["name"], document_name_str, document_links, firm_name, sender_name,
                                 stage_deadline, case_title, case_number, stage_attempt, req.litigation_type,
@@ -4323,7 +4721,11 @@ async def send_campaign_for_approval(case_id: str, campaign_id: str, req: Campai
         requester_name = (requester["full_name"] if requester else None) or current_user.get("email", "Your colleague")
         requester_email = current_user.get("email", "")
 
-        campaign_type_label = "Request to Execute Required Document" if campaign["campaign_type"] == "document_execution_request" else "Outstanding Amount"
+        campaign_type_label = (
+            "Request to Execute Required Document" if campaign["campaign_type"] == "document_execution_request"
+            else "PEO Authorization" if campaign["campaign_type"] == "peo_authorization"
+            else "Outstanding Amount"
+        )
 
         token = secrets.token_urlsafe(32)
         expires_at = (datetime.now(timezone.utc) + timedelta(hours=APPROVAL_TOKEN_EXPIRY_HOURS)).isoformat()
@@ -4390,7 +4792,11 @@ async def get_campaign_for_approval(token: str):
             for n, e in sorted(by_step.items())
         ]
 
-        campaign_type_label = "Request to Execute Required Document" if campaign["campaign_type"] == "document_execution_request" else "Outstanding Amount"
+        campaign_type_label = (
+            "Request to Execute Required Document" if campaign["campaign_type"] == "document_execution_request"
+            else "PEO Authorization" if campaign["campaign_type"] == "peo_authorization"
+            else "Outstanding Amount"
+        )
 
         return {
             "campaign_id": campaign["id"],
@@ -4425,7 +4831,11 @@ async def approve_campaign_by_token(token: str):
         db.execute("UPDATE campaign_emails SET status = 'scheduled' WHERE campaign_id = ? AND step_number > 1", (campaign["id"],))
 
         case_row = db.execute("SELECT title FROM cases WHERE id = ?", (campaign["case_id"],)).fetchone()
-        campaign_type_label = "Request to Execute Required Document" if campaign["campaign_type"] == "document_execution_request" else "Outstanding Amount"
+        campaign_type_label = (
+            "Request to Execute Required Document" if campaign["campaign_type"] == "document_execution_request"
+            else "PEO Authorization" if campaign["campaign_type"] == "peo_authorization"
+            else "Outstanding Amount"
+        )
         requester_email = campaign["approval_requested_by_email"]
     if requester_email:
         send_campaign_approved_notify_email(
@@ -4457,7 +4867,11 @@ async def reject_campaign_by_token(token: str, req: CampaignApprovalRejection):
         db.execute("UPDATE campaign_emails SET status = 'cancelled' WHERE campaign_id = ?", (campaign["id"],))
 
         case_row = db.execute("SELECT title FROM cases WHERE id = ?", (campaign["case_id"],)).fetchone()
-        campaign_type_label = "Request to Execute Required Document" if campaign["campaign_type"] == "document_execution_request" else "Outstanding Amount"
+        campaign_type_label = (
+            "Request to Execute Required Document" if campaign["campaign_type"] == "document_execution_request"
+            else "PEO Authorization" if campaign["campaign_type"] == "peo_authorization"
+            else "Outstanding Amount"
+        )
         requester_email = campaign["approval_requested_by_email"]
     if requester_email:
         send_campaign_rejected_notify_email(
