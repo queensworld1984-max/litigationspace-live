@@ -1069,10 +1069,12 @@ def _template_general_letter(
         ref_line = f'<p style="color: #374151; font-size: 14px; margin: 0 0 4px 0;"><strong>Re:</strong> {case_title}</p>'
 
     subject = subject_line or f"Correspondence from {firm_name}"
-    body_html = "".join(
-        f'<p style="color: #374151; font-size: 14px; line-height: 1.7;">{line}</p>'
-        for line in (body_text or "").split("\n\n") if line.strip()
-    ) or '<p style="color: #374151; font-size: 14px; line-height: 1.7;"></p>'
+    # Reuse the same paragraph/list renderer every other editable template
+    # uses: it escapes the text (this used to insert body_text completely
+    # raw and unescaped) and keeps single "\n" line breaks and any pasted
+    # "1. "/"- " list lines intact instead of silently dropping them (plain
+    # "\n\n".split() left lone "\n"s inside one <p>, which HTML collapses).
+    body_html = _render_plaintext_body(body_text or "", {}) or '<p style="color: #374151; font-size: 14px; line-height: 1.7;"></p>'
 
     html = _build_email_header(firm_name, "Attorneys & Counselors at Law", logo_url) + f"""
         <div style="padding: 30px 40px;">
@@ -1132,7 +1134,7 @@ def _template_settlement_offer(
 
             {amount_box}
 
-            {f'<p style="color: #374151; font-size: 14px; line-height: 1.7;">{terms}</p>' if terms else ''}
+            {_render_plaintext_body(terms, {}) if terms else ''}
 
             <p style="color: #374151; font-size: 14px; line-height: 1.7;">
                 Please respond within <strong>{response_deadline_days} days</strong> to accept these terms or to discuss further.
@@ -1201,7 +1203,7 @@ def _template_initial_demand(
                 payment of the full outstanding amount within <strong>{deadline}</strong>.
             </p>
 
-            {f'<p style="color: #374151; font-size: 14px; line-height: 1.7;">{additional_notes}</p>' if additional_notes else ''}
+            {_render_plaintext_body(additional_notes, {}) if additional_notes else ''}
 
             <p style="color: #374151; font-size: 14px; line-height: 1.7;">
                 If payment is not received within the stated period, our client reserves the right to 
@@ -1287,7 +1289,7 @@ def _template_follow_up(
                 remit payment or contact our office to discuss a resolution.
             </p>
 
-            {f'<p style="color: #374151; font-size: 14px; line-height: 1.7;">{additional_notes}</p>' if additional_notes else ''}
+            {_render_plaintext_body(additional_notes, {}) if additional_notes else ''}
 
             <p style="color: #374151; font-size: 14px; line-height: 1.7;">
                 Failure to respond may result in our client pursuing formal legal action without 
@@ -1362,7 +1364,7 @@ def _template_final_notice(
                 </ol>
             </div>
 
-            {f'<p style="color: #374151; font-size: 14px; line-height: 1.7;">{additional_notes}</p>' if additional_notes else ''}
+            {_render_plaintext_body(additional_notes, {}) if additional_notes else ''}
 
             <p style="color: #374151; font-size: 14px; line-height: 1.7;">
                 We strongly urge you to contact us immediately to avoid the additional expense 
@@ -1451,7 +1453,7 @@ def _template_follow_up_2(
                 will be filed without further notice.
             </p>
 
-            {f'<p style="color: #374151; font-size: 14px; line-height: 1.7;">{additional_notes}</p>' if additional_notes else ''}
+            {_render_plaintext_body(additional_notes, {}) if additional_notes else ''}
 
             <div style="background: #eff6ff; border: 1px solid #bfdbfe; border-radius: 8px; padding: 20px; margin: 24px 0;">
                 <p style="color: #1e40af; font-size: 13px; font-weight: 600; margin: 0 0 8px 0;">LAST OPPORTUNITY</p>
@@ -1540,7 +1542,7 @@ def _template_notice_of_intent(
                 <li>Any additional damages or remedies available under applicable law</li>
             </ul>
 
-            {f'<p style="color: #374151; font-size: 14px; line-height: 1.7;">{additional_notes}</p>' if additional_notes else ''}
+            {_render_plaintext_body(additional_notes, {}) if additional_notes else ''}
 
             <div style="background: #f0fdf4; border: 1px solid #86efac; border-radius: 8px; padding: 20px; margin: 24px 0;">
                 <p style="color: #166534; font-size: 13px; font-weight: 600; margin: 0 0 8px 0;">SETTLEMENT REMAINS POSSIBLE</p>
