@@ -2069,8 +2069,11 @@ def _render_custom_html_template(html_tpl: str, tokens: dict, document_links: li
 # ---------------------------------------------------------------------------
 
 def _send_outreach_email(to_email: str, subject: str, html_body: str,
-                         from_name: str = "", tracking_id: str = "") -> bool:
-    """Send an outreach email. Adds tracking pixel if tracking_id provided."""
+                         from_name: str = "", tracking_id: str = "", cc: str = "") -> bool:
+    """Send an outreach email. Adds tracking pixel if tracking_id provided.
+    `cc`, if given, is added to the actual envelope recipients (not just a
+    display header) — used to copy the sender/creator on their own outbound
+    correspondence, so there's a real delivered record of what went out."""
     from app.utils.email import _send_email, SMTP_FROM
 
     # Insert tracking pixel before closing </div>
@@ -2095,17 +2098,23 @@ def _send_outreach_email(to_email: str, subject: str, html_body: str,
         return False
 
     try:
+        to_recipients = parse_recipients(to_email)
+        cc_recipients = [c for c in parse_recipients(cc) if c.lower() not in {r.lower() for r in to_recipients}]
+        envelope_recipients = to_recipients + cc_recipients
+
         msg = MIMEMultipart("alternative")
         msg["Subject"] = subject
         display_name = from_name if from_name else "LitigationSpace"
         msg["From"] = f"{display_name} <{DEFAULT_FROM}>"
         msg["To"] = to_email
+        if cc_recipients:
+            msg["Cc"] = ", ".join(cc_recipients)
         msg["Reply-To"] = DEFAULT_FROM
         msg.attach(MIMEText(html_body, "html"))
 
         if SMTP_HOST in ("localhost", "127.0.0.1") and not SMTP_USER:
             with smtplib.SMTP(SMTP_HOST, SMTP_PORT) as server:
-                server.sendmail(DEFAULT_FROM, to_email, msg.as_string())
+                server.sendmail(DEFAULT_FROM, envelope_recipients, msg.as_string())
         else:
             context = ssl.create_default_context()
             with smtplib.SMTP(SMTP_HOST, SMTP_PORT) as server:
@@ -2113,9 +2122,9 @@ def _send_outreach_email(to_email: str, subject: str, html_body: str,
                 server.starttls(context=context)
                 server.ehlo()
                 server.login(_auth_user, _auth_pass)
-                server.sendmail(DEFAULT_FROM, to_email, msg.as_string())
+                server.sendmail(DEFAULT_FROM, envelope_recipients, msg.as_string())
 
-        logger.info(f"[OUTREACH] Sent to {to_email}: {subject}")
+        logger.info(f"[OUTREACH] Sent to {envelope_recipients}: {subject}")
         return True
     except Exception as e:
         logger.error(f"[OUTREACH] Failed to send to {to_email}: {e}")
@@ -2352,6 +2361,7 @@ async def send_emails(case_id: str, req: EmailSendRequest, current_user: dict = 
                 html_body=req.body_html,
                 from_name=sender_name,
                 tracking_id=tracking_id,
+                cc=current_user.get("email", ""),
             )
 
             status = "sent" if success else "failed"
@@ -2539,6 +2549,7 @@ async def bulk_send_template(case_id: str, req: BulkEmailRequest, current_user: 
                 html_body=html,
                 from_name=sender_name,
                 tracking_id=tracking_id,
+                cc=current_user.get("email", ""),
             )
 
             status = "sent" if success else "failed"
@@ -4974,6 +4985,7 @@ async def send_campaign_step(case_id: str, campaign_id: str, step_number: int = 
                 html_body=email["body_html"],
                 from_name=campaign["from_name"],
                 tracking_id=tracking_id,
+                cc=current_user.get("email", ""),
             )
             status = "sent" if success else "failed"
             db.execute(
@@ -5194,6 +5206,7 @@ async def escalate_case(case_id: str, req: CaseEscalation,
                     </div>
                     """,
                     from_name="LitigationSpace",
+                    cc=current_user.get("email", ""),
                 )
             except Exception as e:
                 logger.error(f"Failed to send escalation email: {e}")
@@ -5516,6 +5529,7 @@ async def create_supervisor_instruction(case_id: str, req: SupervisorInstruction
                     </div>
                     """,
                     from_name="LitigationSpace Supervisor",
+                    cc=current_user.get("email", ""),
                 )
             except Exception as e:
                 logger.error(f"Failed to send supervisor notification: {e}")
@@ -5622,6 +5636,7 @@ async def compose_and_send_email(case_id: str, req: ComposeEmailRequest,
             html_body=final_html,
             from_name=sender_name,
             tracking_id=tracking_id,
+            cc=current_user.get("email", ""),
         )
 
         # Record in case_emails

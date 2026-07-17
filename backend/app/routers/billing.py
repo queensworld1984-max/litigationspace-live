@@ -2124,9 +2124,19 @@ async def send_invoice(invoice_id: str, req: InvoiceSend,
 
         issued = (inv.get("created_at") or "").split("T")[0]
 
+        # Always CC whoever clicked "send" — so there's a delivered copy in
+        # their own inbox as proof the invoice went out, same as the two-gate
+        # approval emails. Deduped against the actual recipients so it isn't
+        # sent twice to the same address.
+        already_addressed = {a.lower() for a in (req.to_emails or []) + (req.cc_emails or [])}
+        sender_email = current_user.get("email", "")
+        cc_emails = list(req.cc_emails or [])
+        if sender_email and sender_email.lower() not in already_addressed:
+            cc_emails.append(sender_email)
+
         sent = send_invoice_email(
             to_emails=req.to_emails,
-            cc_emails=req.cc_emails,
+            cc_emails=cc_emails,
             from_name=meta.get("from_name") or inv.get("issued_by_name") or "Your Attorney",
             from_firm=meta.get("from_firm", ""),
             from_email=meta.get("from_email", ""),
