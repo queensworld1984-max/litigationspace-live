@@ -418,6 +418,19 @@ async def get_sign_page_image(sign_token: str, page: int = 1):
             pdf.close()
             raise HTTPException(status_code=400, detail=f"Page {page} out of range (1-{len(pdf)})")
         pdf_page = pdf[page - 1]
+
+        # The "date" field is auto-filled at actual submission time, never
+        # something the signer types — but left blank, its widget renders
+        # with the exact same empty highlighted look as the fields they DO
+        # need to fill in, reading as broken when clicking it does nothing.
+        # Pre-fill it here too (preview only — nothing is saved back to
+        # disk from this request) so it's visibly already handled.
+        today_str = datetime.now(timezone.utc).strftime("%m/%d/%Y")
+        for widget in (pdf_page.widgets() or []):
+            if widget.field_name == "date":
+                widget.field_value = today_str
+                widget.update()
+
         pix = pdf_page.get_pixmap(matrix=fitz.Matrix(2.0, 2.0))
         img_bytes = pix.tobytes("png")
         pdf.close()
