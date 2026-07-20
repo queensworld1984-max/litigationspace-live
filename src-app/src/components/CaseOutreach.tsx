@@ -74,6 +74,21 @@ interface ProceedingType {
   id: string; key: string; label: string; description?: string
   is_preset: boolean | number; is_active: boolean | number; sort_order?: number
 }
+interface Clause {
+  id: string; category: string; name: string; body: string
+  is_default_for_category: boolean | number; proceeding_type_id?: string | null
+}
+const CLAUSE_CATEGORIES: { id: string; label: string; hint: string }[] = [
+  { id: 'factual_background',      label: 'Factual Background',        hint: 'What happened — the facts giving rise to this communication' },
+  { id: 'contractual_obligations', label: 'Contractual Obligations',   hint: "What the agreement requires of the recipient" },
+  { id: 'requested_action',        label: 'Requested Action',          hint: 'What you want the recipient to do' },
+  { id: 'cure_period',             label: 'Cure Period / Deadline',    hint: 'How long they have to respond or comply' },
+  { id: 'consequences',            label: 'Consequences of Noncompliance', hint: "What happens if they don't respond" },
+  { id: 'remedies_sought',         label: 'Remedies Sought',           hint: 'What relief/recovery you intend to pursue' },
+  { id: 'reservation_of_rights',   label: 'Reservation of Rights',     hint: 'Standard "nothing here waives our rights" language' },
+  { id: 'signature_block',         label: 'Signature Block',           hint: 'Reference notes for how letters should be signed off' },
+  { id: 'cta_config',              label: 'Call-to-Action / Signing Link', hint: 'Notes on the button/link style used to request signature' },
+]
 interface DebtorResponse {
   id: string; contact_id: string; response_type: string; response_method: string
   summary: string; amount_offered?: number; created_at: string
@@ -270,13 +285,14 @@ function ThreadRow({ item }: { item: ThreadItem }) {
   )
 }
 
-type SubTab = 'contacts'|'templates'|'signatures'|'proceeding_types'|'campaigns'|'compose'|'responses'|'supervisor'|'history'
+type SubTab = 'contacts'|'templates'|'signatures'|'proceeding_types'|'clause_library'|'campaigns'|'compose'|'responses'|'supervisor'|'history'
 
 const SUB_TABS: { id: SubTab; label: string }[] = [
   { id: 'contacts',   label: 'Contacts' },
   { id: 'templates',  label: 'Email Templates' },
   { id: 'signatures', label: 'Email Signatures' },
   { id: 'proceeding_types', label: 'Proceeding Types' },
+  { id: 'clause_library', label: 'Clause Library' },
   { id: 'campaigns',  label: 'Campaigns' },
   { id: 'compose',    label: 'Compose Email' },
   { id: 'responses',  label: 'Responses & Actions' },
@@ -308,6 +324,7 @@ export default function CaseOutreach({ caseId, onLoad }: Props) {
   const [campaigns,    setCampaigns]    = useState<Campaign[]>([])
   const [signatures,   setSignatures]   = useState<Signature[]>([])
   const [proceedingTypes, setProceedingTypes] = useState<ProceedingType[]>([])
+  const [clauses, setClauses] = useState<Clause[]>([])
   const [responses,    setResponses]    = useState<DebtorResponse[]>([])
   const [escalations,  setEscalations]  = useState<Escalation[]>([])
   const [settlements,  setSettlements]  = useState<Settlement[]>([])
@@ -316,7 +333,7 @@ export default function CaseOutreach({ caseId, onLoad }: Props) {
   const [caseInfo,     setCaseInfo]     = useState<{ title?: string; client_name?: string; opposing_party?: string } | null>(null)
 
   // ── Modal state ──────────────────────────────────────────────────────────────
-  type ModalKey = 'contact'|'template-preview'|'template-edit'|'template-ai'|'signature'|'sig-from-contact'|'proceeding-type'|'campaign-create'|'campaign-email-edit'|'campaign-send-approval'|'send-document'|'thread'|null
+  type ModalKey = 'contact'|'template-preview'|'template-edit'|'template-ai'|'signature'|'sig-from-contact'|'proceeding-type'|'clause'|'campaign-create'|'campaign-email-edit'|'campaign-send-approval'|'send-document'|'thread'|null
   const [modal,     setModal]     = useState<ModalKey>(null)
   const [modalData, setModalData] = useState<Record<string, any>>({})
 
@@ -357,6 +374,12 @@ export default function CaseOutreach({ caseId, onLoad }: Props) {
   const [ptEditing, setPtEditing] = useState<string | null>(null)
   const [ptSaving,  setPtSaving]  = useState(false)
   const [ptError,   setPtError]   = useState('')
+
+  // ── Clause form ───────────────────────────────────────────────────────────────
+  const [clauseForm,    setClauseForm]    = useState({ category: '', name: '', body: '', is_default_for_category: false })
+  const [clauseEditing, setClauseEditing] = useState<string | null>(null)
+  const [clauseSaving,  setClauseSaving]  = useState(false)
+  const [clauseError,   setClauseError]   = useState('')
 
   // ── Campaign form ─────────────────────────────────────────────────────────────
   const [campForm,    setCampForm]    = useState({ ...EMPTY_CAMP })
@@ -440,6 +463,12 @@ export default function CaseOutreach({ caseId, onLoad }: Props) {
       .catch(() => {}).finally(() => setLoaded(p => ({ ...p, proceeding_types: true })))
   }, [])
 
+  const loadClauses = useCallback(() => {
+    axios.get('/api/outreach/clauses', { headers: hdr() })
+      .then(r => { const d = r.data?.data ?? r.data ?? []; setClauses(Array.isArray(d) ? d : []) })
+      .catch(() => {}).finally(() => setLoaded(p => ({ ...p, clause_library: true })))
+  }, [])
+
   const loadResponses = useCallback(() => {
     Promise.all([
       axios.get(`/api/outreach/cases/${caseId}/responses`,   { headers: hdr() }).catch(() => null),
@@ -479,13 +508,14 @@ export default function CaseOutreach({ caseId, onLoad }: Props) {
     if (subTab === 'templates'  && !loaded.templates)  loadTplSettings()
     if (subTab === 'signatures' && !loaded.signatures) loadSignatures()
     if (subTab === 'proceeding_types' && !loaded.proceeding_types) loadProceedingTypes()
+    if (subTab === 'clause_library' && !loaded.clause_library) loadClauses()
     if (subTab === 'campaigns'  && !loaded.campaigns)  loadCampaigns()
     if (subTab === 'campaigns'  && !loaded.signatures) loadSignatures()
     if (subTab === 'campaigns'  && !loaded.proceeding_types) loadProceedingTypes()
     if (subTab === 'responses'  && !loaded.responses)  loadResponses()
     if (subTab === 'supervisor' && !loaded.supervisor) loadInstructions()
     if (subTab === 'compose'    && !loaded.signatures) loadSignatures()
-  }, [subTab, loaded, loadTplSettings, loadSignatures, loadProceedingTypes, loadCampaigns, loadResponses, loadInstructions])
+  }, [subTab, loaded, loadTplSettings, loadSignatures, loadProceedingTypes, loadClauses, loadCampaigns, loadResponses, loadInstructions])
 
   // ── localStorage auto-save restore (on mount) ────────────────────────────────
   // eslint-disable-next-line react-hooks/exhaustive-deps
@@ -973,6 +1003,42 @@ export default function CaseOutreach({ caseId, onLoad }: Props) {
       alert('Failed to delete proceeding type. Please try again.')
     }
   }
+
+  // ── Clause library CRUD ───────────────────────────────────────────────────────
+  function openAddClause(category: string) {
+    setClauseForm({ category, name: '', body: '', is_default_for_category: clauses.filter(c => c.category === category).length === 0 })
+    setClauseEditing(null); setClauseError(''); setModal('clause')
+  }
+  function openEditClause(c: Clause) {
+    setClauseForm({ category: c.category, name: c.name, body: c.body, is_default_for_category: c.is_default_for_category === 1 || c.is_default_for_category === true })
+    setClauseEditing(c.id); setClauseError(''); setModal('clause')
+  }
+  async function saveClause() {
+    if (!clauseForm.name.trim()) { setClauseError('A name is required.'); return }
+    setClauseSaving(true); setClauseError('')
+    try {
+      if (clauseEditing) await axios.patch(`/api/outreach/clauses/${clauseEditing}`, clauseForm, { headers: jHdr() })
+      else               await axios.post('/api/outreach/clauses', clauseForm, { headers: jHdr() })
+      setModal(null); loadClauses()
+    } catch (err: unknown) {
+      const axErr = err as { response?: { data?: { detail?: string } } }
+      setClauseError(axErr.response?.data?.detail || 'Failed to save clause. Please try again.')
+    }
+    setClauseSaving(false)
+  }
+  async function deleteClause(id: string) {
+    if (!confirm('Delete this clause?')) return
+    try {
+      await axios.delete(`/api/outreach/clauses/${id}`, { headers: hdr() })
+      setClauses(p => p.filter(c => c.id !== id))
+    } catch {
+      alert('Failed to delete clause. Please try again.')
+    }
+  }
+  async function setDefaultClause(c: Clause) {
+    await axios.patch(`/api/outreach/clauses/${c.id}`, { is_default_for_category: true }, { headers: jHdr() }).catch(() => {})
+    loadClauses()
+  }
   async function createSigFromContact(contactId: string) {
     await axios.post(`/api/outreach/email-signatures/from-contact/${contactId}?case_id=${caseId}`, {}, { headers: jHdr() }).catch(() => {})
     setModal(null); loadSignatures()
@@ -1422,6 +1488,57 @@ export default function CaseOutreach({ caseId, onLoad }: Props) {
               ))}
             </div>
           )}
+        </div>
+      )}
+
+      {/* ── CLAUSE LIBRARY ── */}
+      {subTab === 'clause_library' && (
+        <div>
+          <div style={{ marginBottom: 14 }}>
+            <span style={{ color: T1, fontWeight: 700, fontSize: '1rem' }}>Clause Library</span>
+            <p style={{ color: T3, fontSize: '0.8rem', marginTop: 4 }}>
+              Reusable building blocks for your letters. The clause marked <strong>DEFAULT</strong> in each category is what's actually used when assembling a letter —
+              save several variations per category and switch which one is live without editing any code.
+            </p>
+          </div>
+          <div style={{ display: 'flex', flexDirection: 'column', gap: 18 }}>
+            {CLAUSE_CATEGORIES.map(cat => {
+              const catClauses = clauses.filter(c => c.category === cat.id)
+              return (
+                <div key={cat.id}>
+                  <div style={{ display: 'flex', alignItems: 'center', gap: 10, marginBottom: 6 }}>
+                    <span style={{ color: T1, fontWeight: 700, fontSize: '0.85rem', flex: 1 }}>{cat.label}</span>
+                    <button onClick={() => openAddClause(cat.id)} style={{ ...btn('outline'), padding: '3px 9px', fontSize: '0.7rem' }}>+ Add</button>
+                  </div>
+                  <p style={{ color: T3, fontSize: '0.72rem', margin: '0 0 8px' }}>{cat.hint}</p>
+                  {catClauses.length === 0 ? (
+                    <div style={{ ...card, padding: '10px 14px', color: T3, fontSize: '0.78rem' }}>No clauses saved yet.</div>
+                  ) : (
+                    <div style={{ display: 'flex', flexDirection: 'column', gap: 6 }}>
+                      {catClauses.map(c => {
+                        const isDef = c.is_default_for_category === 1 || c.is_default_for_category === true
+                        return (
+                          <div key={c.id} style={{ ...card, border: `1px solid ${isDef ? GOLD + '44' : BD}`, padding: '10px 14px' }}>
+                            <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'flex-start', gap: 8, marginBottom: 6 }}>
+                              <div style={{ color: T1, fontWeight: 700, fontSize: '0.82rem', display: 'flex', alignItems: 'center', gap: 8 }}>
+                                {c.name}{isDef && <span style={{ background: GOLD + '22', color: GOLD, padding: '1px 7px', borderRadius: 4, fontSize: '0.6rem', fontWeight: 700 }}>DEFAULT</span>}
+                              </div>
+                              <div style={{ display: 'flex', gap: 6, flexShrink: 0 }}>
+                                {!isDef && <button onClick={() => setDefaultClause(c)} style={{ ...btn('outline'), padding: '3px 9px', fontSize: '0.68rem' }}>Set Default</button>}
+                                <button onClick={() => openEditClause(c)} style={{ ...btn('outline'), padding: '3px 9px', fontSize: '0.68rem', color: '#60a5fa', borderColor: '#60a5fa44' }}>Edit</button>
+                                <button onClick={() => deleteClause(c.id)} style={{ ...btn('outline'), padding: '3px 9px', fontSize: '0.68rem', color: '#f87171', borderColor: '#f8717144' }}>Delete</button>
+                              </div>
+                            </div>
+                            <div style={{ color: T2, fontSize: '0.78rem', whiteSpace: 'pre-wrap' }}>{c.body}</div>
+                          </div>
+                        )
+                      })}
+                    </div>
+                  )}
+                </div>
+              )
+            })}
+          </div>
         </div>
       )}
 
@@ -2188,6 +2305,36 @@ export default function CaseOutreach({ caseId, onLoad }: Props) {
             <div style={{ display: 'flex', gap: 8, justifyContent: 'flex-end' }}>
               <button onClick={() => setModal(null)} style={btn('gray')}>Cancel</button>
               <button onClick={savePt} disabled={ptSaving} style={btn('gold')}>{ptSaving ? 'Saving…' : ptEditing ? 'Update' : 'Add'}</button>
+            </div>
+          </div>
+        </ModalWrap>
+      )}
+
+      {/* Clause Modal */}
+      {modal === 'clause' && (
+        <ModalWrap onClose={() => setModal(null)} maxW={560}>
+          <MHead title={clauseEditing ? 'Edit Clause' : `Add Clause — ${CLAUSE_CATEGORIES.find(c => c.id === clauseForm.category)?.label ?? ''}`} onClose={() => setModal(null)} />
+          <div style={{ padding: 20 }}>
+            <div style={{ marginBottom: 12 }}>
+              <label style={lbl}>Name *</label>
+              <input style={inp} value={clauseForm.name} onChange={e => setClauseForm(p => ({ ...p, name: e.target.value }))} placeholder="e.g. Standard Cure Period — 10 Days" />
+            </div>
+            <div style={{ marginBottom: 12 }}>
+              <label style={lbl}>Text</label>
+              <textarea style={{ ...inp, minHeight: 160, resize: 'vertical' }} value={clauseForm.body} onChange={e => setClauseForm(p => ({ ...p, body: e.target.value }))} placeholder="Use [Bracket Tokens] like [Recipient Company], [Amount Owed], [Response Deadline Days] — filled in automatically per recipient." />
+            </div>
+            <label style={{ display: 'flex', alignItems: 'center', gap: 8, marginBottom: 14, cursor: 'pointer' }}>
+              <input type="checkbox" checked={clauseForm.is_default_for_category} onChange={e => setClauseForm(p => ({ ...p, is_default_for_category: e.target.checked }))} style={{ width: 15, height: 15, accentColor: GOLD }} />
+              <span style={{ color: T2, fontSize: '0.82rem' }}>Use this as the default for this category (replaces the current default, if any)</span>
+            </label>
+            {clauseError && (
+              <div style={{ background: 'rgba(239,68,68,0.1)', border: '1px solid rgba(239,68,68,0.35)', borderRadius: 8, padding: '9px 12px', marginBottom: 12, color: '#fca5a5', fontSize: '0.82rem' }}>
+                {clauseError}
+              </div>
+            )}
+            <div style={{ display: 'flex', gap: 8, justifyContent: 'flex-end' }}>
+              <button onClick={() => setModal(null)} style={btn('gray')}>Cancel</button>
+              <button onClick={saveClause} disabled={clauseSaving} style={btn('gold')}>{clauseSaving ? 'Saving…' : clauseEditing ? 'Update' : 'Add'}</button>
             </div>
           </div>
         </ModalWrap>
