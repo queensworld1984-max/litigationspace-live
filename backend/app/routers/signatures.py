@@ -44,6 +44,7 @@ class SubmitPageSignature(BaseModel):
 
 class SubmitAllSignatures(BaseModel):
     signatures: List[SubmitPageSignature]
+    form_field_values: Optional[dict] = None
 
 
 # ─── Signature page detection patterns ──────────────────────────────
@@ -317,6 +318,13 @@ async def get_signature_request(sign_token: str, request: Request):
         ).fetchall()
         completed_pages = [r["page_number"] for r in completed]
 
+        form_fields_schema = json.loads(req["form_fields_schema"]) if req["form_fields_schema"] else None
+        submitted_values = json.loads(req["form_field_values"]) if req["form_field_values"] else {}
+        if form_fields_schema:
+            for f in form_fields_schema:
+                if f["key"] in submitted_values:
+                    f["value"] = submitted_values[f["key"]]
+
         return {
             "request_id": req["id"],
             "document_id": req["document_id"],
@@ -327,6 +335,7 @@ async def get_signature_request(sign_token: str, request: Request):
             "message": req["message"],
             "status": req["status"],
             "created_at": req["created_at"],
+            "form_fields_schema": form_fields_schema,
         }
 
 
@@ -370,6 +379,27 @@ async def submit_signatures(sign_token: str, req: SubmitAllSignatures):
         if missing:
             raise HTTPException(status_code=400, detail=f"Missing signatures for pages: {sorted(missing)}")
 
+        # If this request requires form fields, every one must have a value
+        # (submitted now, or already prefilled) before the form can be
+        # considered complete — the user must fill the form, not just sign it.
+        form_fields_schema = json.loads(sig_req["form_fields_schema"]) if sig_req["form_fields_schema"] else None
+        merged_values = {}
+        if form_fields_schema:
+            prior_values = json.loads(sig_req["form_field_values"]) if sig_req["form_field_values"] else {}
+            submitted_values = req.form_field_values or {}
+            missing_fields = []
+            for f in form_fields_schema:
+                val = (submitted_values.get(f["key"]) or prior_values.get(f["key"]) or "").strip()
+                if not val:
+                    missing_fields.append(f["label"])
+                merged_values[f["key"]] = val
+            if missing_fields:
+                raise HTTPException(status_code=400, detail=f"Please fill in: {', '.join(missing_fields)}")
+            db.execute(
+                "UPDATE signature_requests SET form_field_values = ? WHERE id = ?",
+                (json.dumps(merged_values), sig_req["id"])
+            )
+
         # Save each page signature
         for sig in req.signatures:
             if sig.page_number not in required_pages:
@@ -387,11 +417,15 @@ async def submit_signatures(sign_token: str, req: SubmitAllSignatures):
             (now, sig_req["id"])
         )
 
-        # Embed signatures into PDF
+        # Embed signatures (+ typed form field values, if this request has
+        # any) into PDF
         doc = db.execute("SELECT * FROM documents WHERE id = ?", (sig_req["document_id"],)).fetchone()
         signed_path = None
         if doc:
-            signed_path = _embed_signatures_in_pdf(doc, req.signatures, sig_req)
+            signed_path = _embed_signatures_in_pdf(
+                db, doc, req.signatures, sig_req,
+                form_fields_schema=form_fields_schema, form_field_values=merged_values,
+            )
 
         # If outreach-originated, log completion as a permanent thread event
         firm_notify_email, firm_notify_name, case_title, review_url = None, None, "", None
@@ -482,8 +516,52 @@ async def download_signed_document(sign_token: str):
         return FileResponse(full_path, media_type="application/pdf", filename=doc["filename"])
 
 
-def _embed_signatures_in_pdf(doc: dict, signatures: List[SubmitPageSignature], sig_req: dict) -> str | None:
-    """Embed signature images into PDF pages using PyMuPDF (fitz)."""
+def _embed_form_field_values(pdf, form_fields_schema: list, form_field_values: dict) -> None:
+    """Fill typed values into a PDF's real AcroForm text widgets by field
+    name (the correct way to fill a genuine fillable PDF — the form's own
+    highlighted fill-in boxes are annotation widgets that render on top of
+    the page content, so drawing free text onto the page underneath them
+    is invisible; setting the widget's own value is what actually shows).
+
+    A field can list more than one field_name (e.g. "company" appears both
+    inline in the recital and again in the signature block, as two separate
+    widgets) — the same value is written into every matching widget.
+
+    Falls back to text-search placement (`anchors`, if given) for any field
+    whose field_names aren't found as real widgets — keeps this usable for
+    a future document that has descriptive labels but isn't a true AcroForm."""
+    import fitz  # PyMuPDF
+    for field in form_fields_schema:
+        value = form_field_values.get(field["key"], "")
+        if not value:
+            continue
+        matched_by_widget = False
+        for page in pdf:
+            for widget in page.widgets() or []:
+                if widget.field_name in field.get("field_names", []):
+                    widget.field_value = value
+                    widget.update()
+                    matched_by_widget = True
+        if matched_by_widget:
+            continue
+        for anchor in field.get("anchors", []):
+            for page in pdf:
+                hits = page.search_for(anchor)
+                for rect in hits:
+                    x0 = rect.x1 + 4
+                    y0 = rect.y0 - 1
+                    text_rect = fitz.Rect(x0, y0, min(x0 + 220, page.rect.width - 20), rect.y1 + 3)
+                    page.insert_textbox(text_rect, value, fontsize=9, color=(0, 0, 0.6), align=0)
+
+
+def _embed_signatures_in_pdf(db, doc: dict, signatures: List[SubmitPageSignature], sig_req: dict,
+                              form_fields_schema: list = None, form_field_values: dict = None) -> str | None:
+    """Embed signature images (+ typed form field values, if any) into PDF
+    pages using PyMuPDF (fitz). Takes the caller's already-open db connection
+    for the signed-document insert rather than opening a second one — a
+    second connection attempting to write while the caller's transaction is
+    still open deadlocks under SQLite's WAL mode (no busy_timeout is set),
+    which silently failed every signed-document save before this fix."""
     try:
         import fitz  # PyMuPDF
     except ImportError:
@@ -497,6 +575,15 @@ def _embed_signatures_in_pdf(doc: dict, signatures: List[SubmitPageSignature], s
 
     try:
         pdf = fitz.open(full_path)
+
+        if form_fields_schema and form_field_values:
+            _embed_form_field_values(pdf, form_fields_schema, form_field_values)
+            # Auto-stamp today's date next to a "Date:" label, if present —
+            # the signer isn't asked to type this, it's filled automatically
+            # the same way the signature itself is dated below.
+            today_str = datetime.now(timezone.utc).strftime("%m/%d/%Y")
+            _embed_form_field_values(pdf, [{"key": "_auto_date", "field_names": ["date"], "anchors": ["Date:"]}], {"_auto_date": today_str})
+
         for sig in signatures:
             page_idx = sig.page_number - 1  # 0-indexed
             if page_idx < 0 or page_idx >= len(pdf):
@@ -511,31 +598,50 @@ def _embed_signatures_in_pdf(doc: dict, signatures: List[SubmitPageSignature], s
                 sig_data = sig_data.split(",", 1)[1]
             img_bytes = base64.b64decode(sig_data)
 
-            # Place signature at bottom-center of the page
-            sig_width = page_rect.width * 0.35
-            sig_height = sig_width * 0.25
-            x_center = (page_rect.width - sig_width) / 2
-            y_bottom = page_rect.height - sig_height - 60  # 60pt from bottom
+            # If this page has a real "signature" AcroForm field (a genuine
+            # fillable form), place the drawn signature image inside that
+            # exact box instead of guessing a generic bottom-of-page spot —
+            # the field's own "Signature:" label already gives it context,
+            # so no extra line/caption is added on top of it. It's a Text
+            # widget (there's no image-type field to set a value on), and
+            # widget annotations render on top of page content — so the
+            # widget itself is deleted first, or the image would be drawn
+            # underneath its highlighted box and never actually show.
+            sig_widget_rect = None
+            for widget in (page.widgets() or []):
+                if widget.field_name == "signature":
+                    sig_widget_rect = widget.rect
+                    page.delete_widget(widget)
+                    break
 
-            sig_rect = fitz.Rect(x_center, y_bottom, x_center + sig_width, y_bottom + sig_height)
+            if sig_widget_rect:
+                pad = 2
+                sig_rect = fitz.Rect(sig_widget_rect.x0 + pad, sig_widget_rect.y0 + pad,
+                                     sig_widget_rect.x1 - pad, sig_widget_rect.y1 - pad)
+                page.insert_image(sig_rect, stream=img_bytes)
+            else:
+                # Generic fallback: bottom-center of the page, with a drawn
+                # line and signer/date caption for context.
+                sig_width = page_rect.width * 0.35
+                sig_height = sig_width * 0.25
+                x_center = (page_rect.width - sig_width) / 2
+                y_bottom = page_rect.height - sig_height - 60  # 60pt from bottom
 
-            # Add a signature line and label
-            page.draw_line(
-                fitz.Point(x_center, y_bottom + sig_height + 5),
-                fitz.Point(x_center + sig_width, y_bottom + sig_height + 5),
-                color=(0, 0, 0), width=0.5
-            )
-            # Insert text below the line
-            label_rect = fitz.Rect(x_center, y_bottom + sig_height + 8,
-                                   x_center + sig_width, y_bottom + sig_height + 22)
-            page.insert_textbox(
-                label_rect,
-                f"{sig_req['signer_name']} — Signed {datetime.now(timezone.utc).strftime('%m/%d/%Y')}",
-                fontsize=7, color=(0.3, 0.3, 0.3), align=1  # center
-            )
+                sig_rect = fitz.Rect(x_center, y_bottom, x_center + sig_width, y_bottom + sig_height)
 
-            # Insert signature image
-            page.insert_image(sig_rect, stream=img_bytes)
+                page.draw_line(
+                    fitz.Point(x_center, y_bottom + sig_height + 5),
+                    fitz.Point(x_center + sig_width, y_bottom + sig_height + 5),
+                    color=(0, 0, 0), width=0.5
+                )
+                label_rect = fitz.Rect(x_center, y_bottom + sig_height + 8,
+                                       x_center + sig_width, y_bottom + sig_height + 22)
+                page.insert_textbox(
+                    label_rect,
+                    f"{sig_req['signer_name']} — Signed {datetime.now(timezone.utc).strftime('%m/%d/%Y')}",
+                    fontsize=7, color=(0.3, 0.3, 0.3), align=1  # center
+                )
+                page.insert_image(sig_rect, stream=img_bytes)
 
         # Save signed PDF
         base_name = os.path.splitext(relative_path)[0]
@@ -545,18 +651,18 @@ def _embed_signatures_in_pdf(doc: dict, signatures: List[SubmitPageSignature], s
         pdf.save(signed_full_path)
         pdf.close()
 
-        # Also save a copy as a new document in the case's "signed" folder
-        with get_db() as db:
-            signed_doc_id = generate_id()
-            original_name = doc["filename"]
-            signed_doc_name = f"SIGNED_{original_name}"
-            db.execute(
-                """INSERT INTO documents
-                   (id, case_id, tenant_id, filename, file_path, mime_type, file_size, category, is_merged, exhibit_label)
-                   VALUES (?, ?, ?, ?, ?, 'application/pdf', ?, 'ready', 0, 'Signed')""",
-                (signed_doc_id, doc["case_id"], doc["tenant_id"], signed_doc_name,
-                 signed_filename, os.path.getsize(signed_full_path))
-            )
+        # Also save a copy as a new document in the case's "signed" folder —
+        # reuses the caller's open connection/transaction (see docstring).
+        signed_doc_id = generate_id()
+        original_name = doc["filename"]
+        signed_doc_name = f"SIGNED_{original_name}"
+        db.execute(
+            """INSERT INTO documents
+               (id, case_id, tenant_id, filename, file_path, mime_type, file_size, category, is_merged, exhibit_label)
+               VALUES (?, ?, ?, ?, ?, 'application/pdf', ?, 'ready', 0, 'Signed')""",
+            (signed_doc_id, doc["case_id"], doc["tenant_id"], signed_doc_name,
+             signed_filename, os.path.getsize(signed_full_path))
+        )
 
         print(f"[SIGNATURES] Embedded signatures into {signed_full_path}")
         return signed_full_path

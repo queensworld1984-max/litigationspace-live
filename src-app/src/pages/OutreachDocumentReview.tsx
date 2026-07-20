@@ -24,7 +24,7 @@ interface LinkDoc {
   document_id: string
   filename: string
   category?: string
-  mode: 'review' | 'sign' | 'wet_sign'
+  mode: 'review' | 'sign' | 'wet_sign' | 'choice'
   allow_download: boolean
   status: string
   sign_token: string | null
@@ -55,6 +55,7 @@ export default function OutreachDocumentReview() {
 
   const [uploadingSigned, setUploadingSigned] = useState(false)
   const [uploadErr, setUploadErr]             = useState('')
+  const [chosenMode, setChosenMode]           = useState<'online' | 'wet_sign' | null>(null)
 
   const viewStart = useRef(Date.now())
 
@@ -176,18 +177,50 @@ export default function OutreachDocumentReview() {
             </div>
           )}
 
-          {doc.mode === 'wet_sign' && doc.status === 'signed' && (
+          {doc.mode === 'choice' && !chosenMode && doc.status !== 'signed' && (
+            <div style={{ marginBottom: 16, padding: '18px 20px', background: 'linear-gradient(135deg,#1e293b,#334155)', borderRadius: 10, border: '1px solid #d97706' }}>
+              <div style={{ fontSize: 13, fontWeight: 800, color: '#fbbf24', marginBottom: 4 }}>✒ This form requires your signature</div>
+              <div style={{ fontSize: 12, color: 'rgba(255,255,255,0.65)', marginBottom: 14, lineHeight: 1.6 }}>
+                Choose how you'd like to complete it.
+              </div>
+              <div style={{ display: 'flex', flexWrap: 'wrap', gap: 10 }}>
+                {doc.sign_token && (
+                  <button onClick={() => navigate(`/sign/${doc.sign_token}`)}
+                    style={{ flex: '1 1 220px', padding: '14px 16px', borderRadius: 10, border: 'none', background: 'linear-gradient(135deg,#f59e0b,#d97706)', color: '#000', fontSize: 13, fontWeight: 800, cursor: 'pointer', textAlign: 'left' }}>
+                    ✍ Fill &amp; Sign Online
+                    <div style={{ fontSize: 11, fontWeight: 600, marginTop: 3, opacity: 0.75 }}>Complete the form and sign in your browser — no printing required</div>
+                  </button>
+                )}
+                <button onClick={() => setChosenMode('wet_sign')}
+                  style={{ flex: '1 1 220px', padding: '14px 16px', borderRadius: 10, border: '1px solid rgba(255,255,255,0.15)', background: 'rgba(255,255,255,0.06)', color: '#fff', fontSize: 13, fontWeight: 800, cursor: 'pointer', textAlign: 'left' }}>
+                  ⬇ Download &amp; Sign by Hand
+                  <div style={{ fontSize: 11, fontWeight: 600, marginTop: 3, opacity: 0.7 }}>Print it, sign it, then upload a photo or scan</div>
+                </button>
+              </div>
+            </div>
+          )}
+
+          {(doc.mode === 'wet_sign' || chosenMode === 'wet_sign') && doc.status === 'signed' && (
             <div style={{ marginBottom: 16, padding: '14px 20px', background: 'linear-gradient(135deg,#064e3b,#065f46)', borderRadius: 10, border: '1px solid #10b981' }}>
               <div style={{ fontSize: 13, fontWeight: 800, color: '#6ee7b7' }}>✅ Signed copy received</div>
               <div style={{ fontSize: 12, color: 'rgba(255,255,255,0.7)', marginTop: 2 }}>Thank you — your signed document was uploaded successfully.</div>
             </div>
           )}
 
-          {doc.mode === 'wet_sign' && doc.status !== 'signed' && (
+          {(doc.mode === 'wet_sign' || chosenMode === 'wet_sign') && doc.status !== 'signed' && (
             <div style={{ marginBottom: 16, padding: '16px 20px', background: 'linear-gradient(135deg,#1e293b,#334155)', borderRadius: 10, border: '1px solid #d97706' }}>
-              <div style={{ fontSize: 13, fontWeight: 800, color: '#fbbf24', marginBottom: 4 }}>✒ This document requires a handwritten signature</div>
+              <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'flex-start', gap: 12, marginBottom: 4 }}>
+                <div style={{ fontSize: 13, fontWeight: 800, color: '#fbbf24' }}>✒ Download, sign by hand, and upload</div>
+                {doc.mode === 'choice' && (
+                  <button onClick={() => setChosenMode(null)} style={{ background: 'none', border: 'none', color: 'rgba(255,255,255,0.5)', fontSize: 11, cursor: 'pointer', textDecoration: 'underline', whiteSpace: 'nowrap' }}>
+                    Choose a different method
+                  </button>
+                )}
+              </div>
               <div style={{ fontSize: 12, color: 'rgba(255,255,255,0.6)', marginBottom: 12, lineHeight: 1.6 }}>
-                A drawn or typed signature isn't valid for this form when filed by mail or fax. Download it below, print it, sign it by hand, then upload a photo or scan of the signed page here.
+                {doc.mode === 'wet_sign'
+                  ? "A drawn or typed signature isn't valid for this form when filed by mail or fax. Download it below, print it, sign it by hand, then upload a photo or scan of the signed page here."
+                  : 'Download it below, print it, sign it by hand, then upload a photo or scan of the signed page here.'}
               </div>
               <div style={{ display: 'flex', flexWrap: 'wrap', gap: 10, alignItems: 'center' }}>
                 {doc.allow_download && (

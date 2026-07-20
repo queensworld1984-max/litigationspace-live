@@ -2531,11 +2531,13 @@ async def bulk_send_template(case_id: str, req: BulkEmailRequest, current_user: 
                     ).fetchone()
                     if not doc_row:
                         continue
+                    _is_peo = req.template_type == "peo_authorization"
                     dlink = _create_outreach_document_link(
                         db, tenant_id, case_id, contact_id, doc_id,
                         contact["name"], contact["email"] or "", created_by=user_id,
                         message=f"{sender_name} has requested your signature on this document.",
-                        mode="wet_sign", allow_download=True, signature_pages=[1],
+                        mode="choice" if _is_peo else "wet_sign", allow_download=True, signature_pages=[1],
+                        form_fields_schema=_build_peo_form_fields_schema(dict(contact)) if _is_peo else None,
                     )
                     document_links.append({"filename": doc_row["filename"], "review_url": dlink["review_url"]})
                     document_names.append(doc_row["filename"])
@@ -2651,17 +2653,47 @@ async def bulk_send_template(case_id: str, req: BulkEmailRequest, current_user: 
 # DOCUMENT LINKS — secure no-login review/sign, per recipient, fully tracked
 # ---------------------------------------------------------------------------
 
+# The PEO Authorization form (a private authorization between the client,
+# their PEO, and the firm — not an IRS form) can be completed fully online:
+# filled in and e-signed, unlike IRS Form 8821 which legally requires a wet
+# signature. This PDF is a genuine fillable AcroForm — `field_names` are its
+# actual named text-widget field names (confirmed via page.widgets()),
+# filled directly via PyMuPDF's form-fill API rather than guessed text
+# positions. "company" lists two field names because it appears both in the
+# inline recital (client_company_inline) and the CLIENT block (company),
+# and both should be filled from the one answer.
+_PEO_AUTHORIZATION_FORM_FIELDS = [
+    {"key": "company", "label": "Company (Client Name)", "field_names": ["client_company_inline", "company"], "prefill_from": "company"},
+    {"key": "peo_name", "label": "Name of the PEO You're Authorizing", "field_names": ["peo_name_inline"], "prefill_from": None},
+    {"key": "authorized_representative", "label": "Your Name (Authorized Representative)", "field_names": ["authorized_representative"], "prefill_from": "name"},
+    {"key": "title", "label": "Your Title", "field_names": ["title"], "prefill_from": "contact_title"},
+]
+
+
+def _build_peo_form_fields_schema(contact: dict) -> list:
+    """Copies _PEO_AUTHORIZATION_FORM_FIELDS with each field's current value
+    prefilled from the contact record where available — the signer only has
+    to type the one thing the system genuinely doesn't already know (the
+    PEO's name), and can review/correct the rest before signing."""
+    schema = []
+    for f in _PEO_AUTHORIZATION_FORM_FIELDS:
+        field = dict(f)
+        field["value"] = (contact.get(f["prefill_from"]) or "") if f["prefill_from"] else ""
+        schema.append(field)
+    return schema
+
+
 def _create_outreach_document_link(db, tenant_id: str, case_id: str, contact_id: str, document_id: str,
                                     contact_name: str, contact_email: str, created_by: str, message: str = "",
                                     mode: str = "sign", allow_download: bool = True, hours: int = 168,
-                                    signature_pages: list = None) -> dict:
+                                    signature_pages: list = None, form_fields_schema: list = None) -> dict:
     """Create a tokenized per-recipient document link (+ bridging signature
-    request when mode='sign') without sending an email — the caller decides
-    how/when to notify (a standalone send, or embedded as one of several
-    buttons in a larger templated email). Reuses an existing still-pending
-    link for the same contact+document+mode instead of minting a new one —
-    matters because this is called on every template preview/reload, not
-    just on an actual send."""
+    request when mode is 'sign' or 'choice') without sending an email — the
+    caller decides how/when to notify (a standalone send, or embedded as one
+    of several buttons in a larger templated email). Reuses an existing
+    still-pending link for the same contact+document+mode instead of minting
+    a new one — matters because this is called on every template
+    preview/reload, not just on an actual send."""
     existing = db.execute(
         """SELECT * FROM outreach_document_links
            WHERE contact_id = ? AND document_id = ? AND mode = ? AND status = 'sent'
@@ -2682,16 +2714,17 @@ def _create_outreach_document_link(db, tenant_id: str, case_id: str, contact_id:
     link_id = generate_id()
 
     sign_token = None
-    if mode == "sign":
+    if mode in ("sign", "choice"):
         sign_token = _secrets.token_urlsafe(32)
         sig_req_id = generate_id()
         db.execute(
             """INSERT INTO signature_requests
                (id, document_id, tenant_id, signer_name, signer_email, sign_token,
-                signature_pages, status, message, expires_at, case_id, contact_id)
-               VALUES (?, ?, ?, ?, ?, ?, ?, 'pending', ?, ?, ?, ?)""",
+                signature_pages, status, message, expires_at, case_id, contact_id, form_fields_schema)
+               VALUES (?, ?, ?, ?, ?, ?, ?, 'pending', ?, ?, ?, ?, ?)""",
             (sig_req_id, document_id, tenant_id, contact_name, contact_email or "",
-             sign_token, json.dumps(signature_pages or [1]), message, expires_at, case_id, contact_id)
+             sign_token, json.dumps(signature_pages or [1]), message, expires_at, case_id, contact_id,
+             json.dumps(form_fields_schema) if form_fields_schema else None)
         )
 
     db.execute(
@@ -2829,7 +2862,7 @@ async def get_document_link(token: str, request: Request):
             "document_id": doc["id"], "filename": doc["filename"], "category": doc["category"],
             "mode": link["mode"], "allow_download": bool(link["allow_download"]),
             "status": "opened" if link["status"] == "sent" else link["status"],
-            "sign_token": link["sign_token"] if link["mode"] == "sign" else None,
+            "sign_token": link["sign_token"] if link["mode"] in ("sign", "choice") else None,
             "view_event_id": event_id, "comments": comments,
         }
 
@@ -3441,11 +3474,13 @@ async def preview_template(req: BulkEmailRequest, current_user: dict = Depends(g
                     ).fetchone()
                     if not doc_row:
                         continue
+                    _is_peo = req.template_type == "peo_authorization"
                     link = _create_outreach_document_link(
                         db, tenant_id, real_contact["case_id"], real_contact["id"], doc_id,
                         contact_name, real_contact["email"] or "", created_by=current_user["sub"],
                         message=f"{sender_name} has requested your signature on this document.",
-                        mode="wet_sign", allow_download=True, signature_pages=[1],
+                        mode="choice" if _is_peo else "wet_sign", allow_download=True, signature_pages=[1],
+                        form_fields_schema=_build_peo_form_fields_schema(dict(real_contact)) if _is_peo else None,
                     )
                     document_links.append({"filename": doc_row["filename"], "review_url": link["review_url"]})
                     document_names.append(doc_row["filename"])
@@ -4788,11 +4823,13 @@ async def create_campaign(case_id: str, req: CampaignCreate, current_user: dict 
                     ).fetchone()
                     if not doc_row:
                         continue
+                    _is_peo = campaign_type == "peo_authorization"
                     dlink = _create_outreach_document_link(
                         db, tenant_id, case_id, contact_id, doc_id,
                         contact["name"], contact["email"] or "", created_by=user_id,
                         message=f"{sender_name} has requested your signature on this document.",
-                        mode="wet_sign", allow_download=True, signature_pages=[1],
+                        mode="choice" if _is_peo else "wet_sign", allow_download=True, signature_pages=[1],
+                        form_fields_schema=_build_peo_form_fields_schema(dict(contact)) if _is_peo else None,
                     )
                     document_links.append({"filename": doc_row["filename"], "review_url": dlink["review_url"]})
                     document_names.append(doc_row["filename"])

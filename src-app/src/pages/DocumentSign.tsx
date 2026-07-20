@@ -9,6 +9,12 @@ import axios from 'axios'
 import { useParams } from 'react-router-dom'
 
 // ── Types ──────────────────────────────────────────────────────────────────────
+interface FormField {
+  key: string
+  label: string
+  value?: string
+}
+
 interface SignRequest {
   request_id: string
   document_id: string
@@ -19,6 +25,7 @@ interface SignRequest {
   message?: string
   status: string
   created_at: string
+  form_fields_schema?: FormField[] | null
 }
 
 // ── SignaturePad: one canvas per required page ─────────────────────────────────
@@ -154,6 +161,7 @@ export default function DocumentSign() {
   const [loading,   setLoading]   = useState(true)
   const [error,     setError]     = useState('')
   const [signatures, setSignatures] = useState<Record<number, string>>({})
+  const [formValues, setFormValues] = useState<Record<string, string>>({})
   const [submitting, setSubmitting] = useState(false)
   const [submitErr,  setSubmitErr]  = useState('')
   const [done,       setDone]       = useState(false)
@@ -163,6 +171,11 @@ export default function DocumentSign() {
     axios.get(`/api/signatures/sign/${token}`)
       .then(r => {
         setReq(r.data)
+        if (r.data.form_fields_schema) {
+          const prefill: Record<string, string> = {}
+          for (const f of r.data.form_fields_schema as FormField[]) prefill[f.key] = f.value || ''
+          setFormValues(prefill)
+        }
         // If already fully signed
         if (r.data.status === 'signed') setDone(true)
         setLoading(false)
@@ -177,9 +190,12 @@ export default function DocumentSign() {
     setSignatures(prev => ({ ...prev, [pageNum]: dataUrl }))
   }
 
-  const allConfirmed = req ? req.signature_pages.every(p => signatures[p]) : false
+  const formFields = req?.form_fields_schema || []
+  const formComplete = formFields.every(f => (formValues[f.key] || '').trim())
+  const allConfirmed = req ? req.signature_pages.every(p => signatures[p]) && formComplete : false
 
   const submit = async () => {
+    if (!formComplete) { setSubmitErr('Please fill in every field before submitting.'); return }
     if (!allConfirmed) { setSubmitErr('Please confirm all required signatures before submitting.'); return }
     setSubmitting(true); setSubmitErr('')
     try {
@@ -187,7 +203,7 @@ export default function DocumentSign() {
         page_number: parseInt(page),
         signature_data: data,
       }))
-      await axios.post(`/api/signatures/sign/${token}/submit`, { signatures: sigs })
+      await axios.post(`/api/signatures/sign/${token}/submit`, { signatures: sigs, form_field_values: formValues })
       setDone(true)
     } catch (e: unknown) {
       const msg = (e as { response?: { data?: { detail?: string } } })?.response?.data?.detail
@@ -277,9 +293,29 @@ export default function DocumentSign() {
         <div style={{ marginBottom: 18 }}>
           <h2 style={{ margin: '0 0 4px', fontSize: 17, fontWeight: 800, color: '#1a2340' }}>Hello, {req.signer_name}</h2>
           <p style={{ margin: 0, fontSize: 13, color: '#64748b' }}>
-            Please draw your signature on the pad{req.signature_pages.length > 1 ? 's' : ''} below, confirm each one, then click Submit.
+            {formFields.length > 0
+              ? 'Fill in the fields below, draw your signature, then click Submit.'
+              : `Please draw your signature on the pad${req.signature_pages.length > 1 ? 's' : ''} below, confirm each one, then click Submit.`}
           </p>
         </div>
+
+        {/* Form fields — must be completed before the form can be submitted */}
+        {formFields.length > 0 && (
+          <div style={{ background: '#fff', border: '1px solid #e2e8f0', borderRadius: 14, padding: '20px 22px', boxShadow: '0 1px 8px rgba(0,0,0,0.05)', marginBottom: 16 }}>
+            <div style={{ fontSize: 13, fontWeight: 800, color: '#1a2340', marginBottom: 14 }}>📝 Complete the form</div>
+            {formFields.map(f => (
+              <div key={f.key} style={{ marginBottom: 14 }}>
+                <label style={{ display: 'block', fontSize: 11.5, fontWeight: 700, color: '#475569', marginBottom: 5, textTransform: 'uppercase', letterSpacing: '0.04em' }}>{f.label}</label>
+                <input
+                  value={formValues[f.key] ?? ''}
+                  onChange={e => setFormValues(p => ({ ...p, [f.key]: e.target.value }))}
+                  placeholder={`Enter ${f.label.toLowerCase()}`}
+                  style={{ width: '100%', boxSizing: 'border-box', padding: '10px 12px', borderRadius: 8, border: '1.5px solid #d1d5db', fontSize: 13.5, outline: 'none', fontFamily: 'inherit' }}
+                />
+              </div>
+            ))}
+          </div>
+        )}
 
         {/* Signature pads */}
         <div style={{ background: '#fff', border: '1px solid #e2e8f0', borderRadius: 14, padding: '20px 22px', boxShadow: '0 1px 8px rgba(0,0,0,0.05)', marginBottom: 16 }}>
@@ -302,7 +338,9 @@ export default function DocumentSign() {
           }}>
             {allConfirmed
               ? `✓ All ${req.signature_pages.length} signature${req.signature_pages.length !== 1 ? 's' : ''} confirmed — ready to submit`
-              : `${Object.keys(signatures).length} of ${req.signature_pages.length} signature${req.signature_pages.length !== 1 ? 's' : ''} confirmed`}
+              : !formComplete
+                ? 'Fill in every field above to continue'
+                : `${Object.keys(signatures).length} of ${req.signature_pages.length} signature${req.signature_pages.length !== 1 ? 's' : ''} confirmed`}
           </div>
 
           {submitErr && <p style={{ margin: '0 0 12px', fontSize: 12, color: '#ef4444' }}>{submitErr}</p>}

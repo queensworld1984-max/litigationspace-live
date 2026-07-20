@@ -813,6 +813,8 @@ def init_db():
                 signed_at TEXT,
                 created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
                 expires_at TEXT,
+                form_fields_schema TEXT,
+                form_field_values TEXT,
                 FOREIGN KEY (document_id) REFERENCES documents(id)
             );
 
@@ -911,7 +913,9 @@ def init_db():
         # Outreach Phase 1 — thread events, document-link tracking, participants, notes
         _create_outreach_thread_tables(db)
         _migrate_outreach_document_links_wet_sign_mode(db)
+        _migrate_outreach_document_links_choice_mode(db)
         _migrate_signature_requests_outreach_columns(db)
+        _migrate_signature_requests_form_fields(db)
         _migrate_email_template_custom_plaintext_columns(db)
 
         # Staged 5-step escalation campaigns — never had a CREATE TABLE anywhere
@@ -1930,7 +1934,7 @@ def _create_outreach_thread_tables(db):
             contact_id TEXT NOT NULL,
             document_id TEXT NOT NULL,
             token TEXT UNIQUE NOT NULL,
-            mode TEXT DEFAULT 'review' CHECK(mode IN ('review', 'sign', 'wet_sign')),
+            mode TEXT DEFAULT 'review' CHECK(mode IN ('review', 'sign', 'wet_sign', 'choice')),
             allow_download INTEGER DEFAULT 1,
             status TEXT DEFAULT 'sent' CHECK(status IN ('sent', 'opened', 'signed', 'declined', 'expired')),
             sign_token TEXT,
@@ -2104,6 +2108,78 @@ def _migrate_outreach_document_links_wet_sign_mode(db):
                     print(f"[MIGRATION] Added {col_name} column to outreach_document_links table")
     except Exception as e:
         print(f"[MIGRATION WARNING] outreach_document_links wet_sign mode: {e}")
+
+
+def _migrate_outreach_document_links_choice_mode(db):
+    """outreach_document_links.mode needs a 4th value, 'choice' — the
+    recipient picks between filling the form and e-signing online, or
+    downloading/printing/hand-signing/uploading, rather than the campaign
+    creator locking in one method for everyone. Same rebuild-on-CHECK-
+    mismatch pattern as the wet_sign migration above."""
+    try:
+        row = db.execute(
+            "SELECT sql FROM sqlite_master WHERE type='table' AND name='outreach_document_links'"
+        ).fetchone()
+        if not row:
+            return
+        needs_rebuild = "'choice'" not in row["sql"]
+        if needs_rebuild:
+            db.executescript("""
+                ALTER TABLE outreach_document_links RENAME TO outreach_document_links_old;
+                CREATE TABLE outreach_document_links (
+                    id TEXT PRIMARY KEY,
+                    tenant_id TEXT NOT NULL,
+                    case_id TEXT NOT NULL,
+                    contact_id TEXT NOT NULL,
+                    document_id TEXT NOT NULL,
+                    token TEXT UNIQUE NOT NULL,
+                    mode TEXT DEFAULT 'review' CHECK(mode IN ('review', 'sign', 'wet_sign', 'choice')),
+                    allow_download INTEGER DEFAULT 1,
+                    status TEXT DEFAULT 'sent' CHECK(status IN ('sent', 'opened', 'signed', 'declined', 'expired')),
+                    sign_token TEXT,
+                    view_count INTEGER DEFAULT 0,
+                    download_count INTEGER DEFAULT 0,
+                    total_view_seconds INTEGER DEFAULT 0,
+                    signed_file_path TEXT,
+                    signed_uploaded_at TEXT,
+                    created_by TEXT NOT NULL,
+                    created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+                    expires_at TEXT,
+                    FOREIGN KEY (case_id) REFERENCES cases(id),
+                    FOREIGN KEY (contact_id) REFERENCES case_contacts(id),
+                    FOREIGN KEY (document_id) REFERENCES documents(id)
+                );
+                INSERT INTO outreach_document_links
+                    (id, tenant_id, case_id, contact_id, document_id, token, mode, allow_download,
+                     status, sign_token, view_count, download_count, total_view_seconds,
+                     signed_file_path, signed_uploaded_at, created_by, created_at, expires_at)
+                SELECT id, tenant_id, case_id, contact_id, document_id, token, mode, allow_download,
+                       status, sign_token, view_count, download_count, total_view_seconds,
+                       signed_file_path, signed_uploaded_at, created_by, created_at, expires_at
+                FROM outreach_document_links_old;
+                DROP TABLE outreach_document_links_old;
+                CREATE INDEX IF NOT EXISTS idx_outreach_doclinks_token ON outreach_document_links(token);
+            """)
+            print("[MIGRATION] Rebuilt outreach_document_links to allow 'choice' mode")
+    except Exception as e:
+        print(f"[MIGRATION WARNING] outreach_document_links choice mode: {e}")
+
+
+def _migrate_signature_requests_form_fields(db):
+    """Adds form_fields_schema (JSON list describing fillable fields the
+    signer must complete before/alongside signing — label, anchor text to
+    locate on the PDF, and which contact field to prefill from) and
+    form_field_values (the signer's actual submitted values, JSON dict) —
+    lets a signing request require real form-fill, not just a signature,
+    without a separate table per document type."""
+    try:
+        cols = {c["name"] for c in db.execute("PRAGMA table_info(signature_requests)").fetchall()}
+        for col_name in ("form_fields_schema", "form_field_values"):
+            if col_name not in cols:
+                db.execute(f"ALTER TABLE signature_requests ADD COLUMN {col_name} TEXT")
+                print(f"[MIGRATION] Added {col_name} column to signature_requests table")
+    except Exception as e:
+        print(f"[MIGRATION WARNING] signature_requests form fields: {e}")
 
 
 def _migrate_billing_contingency_type(db):
