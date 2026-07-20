@@ -128,15 +128,25 @@ export default function OutreachDocumentReview() {
     catch { return s }
   }
 
+  // White chip behind the logo wherever the page background is dark — the
+  // logo's own wordmark is dark text, illegible directly on navy/charcoal.
+  const logoChip = (
+    <div style={{ background: '#fff', borderRadius: 8, padding: '5px 12px', display: 'inline-block' }}>
+      <img src="/logo.png" alt="LitigationSpace" style={{ height: 22, width: 'auto', display: 'block' }} />
+    </div>
+  )
+
   if (loading) return (
     <div style={{ minHeight: '100vh', background: '#111827', display: 'flex', flexDirection: 'column', alignItems: 'center', justifyContent: 'center', gap: 20 }}>
+      {logoChip}
       <div style={{ width: 44, height: 44, border: '3px solid #F5A623', borderTopColor: 'transparent', borderRadius: '50%', animation: 'spin 0.8s linear infinite' }} />
       <p style={{ color: 'rgba(255,255,255,0.5)', fontSize: 14, margin: 0 }}>Loading document…</p>
     </div>
   )
 
   if (error || !doc) return (
-    <div style={{ minHeight: '100vh', background: '#111827', display: 'flex', alignItems: 'center', justifyContent: 'center', padding: 24 }}>
+    <div style={{ minHeight: '100vh', background: '#111827', display: 'flex', flexDirection: 'column', alignItems: 'center', justifyContent: 'center', padding: 24, gap: 20 }}>
+      {logoChip}
       <div style={{ textAlign: 'center', maxWidth: 420 }}>
         <div style={{ width: 64, height: 64, background: 'rgba(239,68,68,0.1)', borderRadius: '50%', display: 'flex', alignItems: 'center', justifyContent: 'center', fontSize: 28, margin: '0 auto 20px' }}>🔗</div>
         <h2 style={{ margin: '0 0 10px', fontSize: 22, fontWeight: 800, color: '#fff' }}>Link Unavailable</h2>
@@ -150,9 +160,8 @@ export default function OutreachDocumentReview() {
   return (
     <div style={{ minHeight: '100vh', background: '#1f2937', fontFamily: "'Inter','Segoe UI',system-ui,sans-serif", display: 'flex', flexDirection: 'column' }}>
       <header style={{ background: '#111827', borderBottom: '1px solid rgba(255,255,255,0.07)', padding: '0 24px', height: 58, display: 'flex', alignItems: 'center', gap: 16, position: 'sticky', top: 0, zIndex: 100, flexShrink: 0 }}>
-        <div style={{ display: 'flex', alignItems: 'center', gap: 9, flexShrink: 0 }}>
-          <div style={{ width: 30, height: 30, background: 'linear-gradient(135deg,#F5A623,#d97706)', borderRadius: 8, display: 'flex', alignItems: 'center', justifyContent: 'center', fontSize: 14 }}>⚖</div>
-          <span style={{ fontSize: 14, fontWeight: 800, color: '#fff', letterSpacing: '-0.01em' }}>LitigationSpace</span>
+        <div style={{ display: 'flex', alignItems: 'center', flexShrink: 0 }}>
+          {logoChip}
         </div>
         <div style={{ width: 1, height: 22, background: 'rgba(255,255,255,0.1)', flexShrink: 0 }} />
         <span style={{ flex: 1, minWidth: 0, fontSize: 13, fontWeight: 600, color: 'rgba(255,255,255,0.85)', overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>{doc.filename}</span>

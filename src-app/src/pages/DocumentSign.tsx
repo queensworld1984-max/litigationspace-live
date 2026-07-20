@@ -270,9 +270,18 @@ export default function DocumentSign() {
     } finally { setSubmitting(false) }
   }
 
+  // A white chip behind the logo everywhere the page background is dark —
+  // the logo's own wordmark is dark text, illegible directly on navy/black.
+  const logoChip = (
+    <div style={{ background: '#fff', borderRadius: 8, padding: '5px 12px', display: 'inline-block', marginBottom: 24 }}>
+      <img src="/logo.png" alt="LitigationSpace" style={{ height: 22, width: 'auto', display: 'block' }} />
+    </div>
+  )
+
   // ── Loading / Error ──────────────────────────────────────────────────────────
   if (loading) return (
-    <div style={{ minHeight: '100vh', background: '#0a0f1a', display: 'flex', alignItems: 'center', justifyContent: 'center' }}>
+    <div style={{ minHeight: '100vh', background: '#0a0f1a', display: 'flex', flexDirection: 'column', alignItems: 'center', justifyContent: 'center' }}>
+      {logoChip}
       <div style={{ textAlign: 'center' }}>
         <Spinner dark />
         <p style={{ color: 'rgba(255,255,255,0.45)', fontSize: 14, margin: 0 }}>Loading signing request…</p>
@@ -281,7 +290,8 @@ export default function DocumentSign() {
   )
 
   if (error) return (
-    <div style={{ minHeight: '100vh', background: '#0a0f1a', display: 'flex', alignItems: 'center', justifyContent: 'center', padding: 24 }}>
+    <div style={{ minHeight: '100vh', background: '#0a0f1a', display: 'flex', flexDirection: 'column', alignItems: 'center', justifyContent: 'center', padding: 24 }}>
+      {logoChip}
       <div style={{ textAlign: 'center', maxWidth: 400 }}>
         <div style={{ fontSize: 48, marginBottom: 14 }}>✍</div>
         <h2 style={{ margin: '0 0 8px', fontSize: 22, fontWeight: 800, color: '#fff' }}>Signing Link Unavailable</h2>
@@ -294,7 +304,8 @@ export default function DocumentSign() {
 
   // ── Done ─────────────────────────────────────────────────────────────────────
   if (done) return (
-    <div style={{ minHeight: '100vh', background: '#0a0f1a', display: 'flex', alignItems: 'center', justifyContent: 'center', padding: 24 }}>
+    <div style={{ minHeight: '100vh', background: '#0a0f1a', display: 'flex', flexDirection: 'column', alignItems: 'center', justifyContent: 'center', padding: 24 }}>
+      {logoChip}
       <div style={{ textAlign: 'center', maxWidth: 460 }}>
         <div style={{ width: 72, height: 72, background: 'linear-gradient(135deg,#22c55e,#16a34a)', borderRadius: '50%', display: 'flex', alignItems: 'center', justifyContent: 'center', fontSize: 32, margin: '0 auto 20px' }}>✓</div>
         <h2 style={{ margin: '0 0 8px', fontSize: 26, fontWeight: 900, color: '#fff' }}>Document Signed!</h2>
@@ -319,8 +330,7 @@ export default function DocumentSign() {
     <div style={{ minHeight: '100vh', background: '#f8fafc', fontFamily: 'Inter, system-ui, sans-serif' }}>
       {/* Topbar */}
       <div style={{ borderBottom: '1px solid #e2e8f0', background: '#fff', padding: '12px 24px', display: 'flex', alignItems: 'center', gap: 12, boxShadow: '0 1px 4px rgba(0,0,0,0.06)' }}>
-        <div style={{ width: 28, height: 28, background: 'linear-gradient(135deg,#F5A623,#d97706)', borderRadius: 7, display: 'flex', alignItems: 'center', justifyContent: 'center', fontSize: 13, flexShrink: 0 }}>⚖</div>
-        <span style={{ fontSize: 14, fontWeight: 700, color: '#1a2340' }}>LitigationSpace</span>
+        <img src="/logo.png" alt="LitigationSpace" style={{ height: 26, width: 'auto', flexShrink: 0 }} />
         <span style={{ marginLeft: 'auto', fontSize: 11, color: '#94a3b8' }}>E-Signature Portal</span>
       </div>
 
