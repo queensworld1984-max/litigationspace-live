@@ -2661,10 +2661,15 @@ async def bulk_send_template(case_id: str, req: BulkEmailRequest, current_user: 
 # filled directly via PyMuPDF's form-fill API rather than guessed text
 # positions. "company" lists two field names because it appears both in the
 # inline recital (client_company_inline) and the CLIENT block (company),
-# and both should be filled from the one answer.
+# and both should be filled from the one answer. The single "PEO name"
+# blank from the prior form revision was replaced with a full PEO Company
+# Name/Physical Address/Telephone/Email block.
 _PEO_AUTHORIZATION_FORM_FIELDS = [
     {"key": "company", "label": "Company (Client Name)", "field_names": ["client_company_inline", "company"], "prefill_from": "company"},
-    {"key": "peo_name", "label": "Name of the PEO You're Authorizing", "field_names": ["peo_name_inline"], "prefill_from": None},
+    {"key": "peo_company_name", "label": "PEO Company Name", "field_names": ["peo_company_name"], "prefill_from": None},
+    {"key": "peo_physical_address", "label": "PEO Physical Address", "field_names": ["peo_physical_address"], "prefill_from": None},
+    {"key": "peo_telephone", "label": "PEO Telephone Number", "field_names": ["peo_telephone"], "prefill_from": None},
+    {"key": "peo_email_contact", "label": "PEO Email / Authorized Contact", "field_names": ["peo_email_contact"], "prefill_from": None},
     {"key": "authorized_representative", "label": "Your Name (Authorized Representative)", "field_names": ["authorized_representative"], "prefill_from": "name"},
     {"key": "title", "label": "Your Title", "field_names": ["title"], "prefill_from": "contact_title"},
 ]
