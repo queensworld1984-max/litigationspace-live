@@ -188,7 +188,14 @@ class InvoiceUpdate(BaseModel):
     payment_link: str = ""
     notes: str = ""
     tax_rate: float = 0
-    items: List[dict] = []
+    # None = caller didn't send items at all (e.g. just editing due date/
+    # notes) -> preserve the invoice's existing items untouched. An
+    # explicit [] means "I really do want to clear every line item."
+    # Defaulting this to [] previously meant ANY update call that forgot to
+    # resend items silently wiped the invoice to $0 without freeing the
+    # linked tasks/time entries — exactly what happened to a real client
+    # invoice; see update_invoice() below for the guard.
+    items: Optional[List[dict]] = None
     client_address: str = ""
     client_city: str = ""
     client_state: str = ""
@@ -2187,7 +2194,7 @@ async def update_invoice(invoice_id: str, req: InvoiceUpdate,
 
     with get_db() as db:
         invoice = db.execute(
-            "SELECT id, status FROM invoices WHERE id = ? AND tenant_id = ?",
+            "SELECT id, status, subtotal FROM invoices WHERE id = ? AND tenant_id = ?",
             (invoice_id, tenant_id)
         ).fetchone()
         if not invoice:
@@ -2195,24 +2202,33 @@ async def update_invoice(invoice_id: str, req: InvoiceUpdate,
         if invoice["status"] not in ("draft",):
             raise HTTPException(status_code=400, detail="Only draft invoices can be edited")
 
-        subtotal = 0.0
-        item_records = []
-        for item in req.items:
-            qty = float(item.get("quantity", 1))
-            rate = float(item.get("rate", 0))
-            amt = float(item.get("amount", round(qty * rate, 2)))
-            subtotal += amt
-            item_records.append({
-                "id": generate_id(),
-                "invoice_id": invoice_id,
-                "description": item.get("description", ""),
-                "item_type": item.get("item_type", "hourly"),
-                "quantity": qty,
-                "rate": rate,
-                "amount": amt,
-                "time_entry_id": item.get("time_entry_id"),
-                "task_id": item.get("task_id"),
-            })
+        # req.items is None when the caller didn't send items at all (e.g.
+        # only editing due date/notes) — preserve the invoice's existing
+        # items/subtotal untouched rather than treating "not sent" the same
+        # as "explicitly clear everything." Only recompute/replace items
+        # when the caller actually provided a list.
+        item_records = None
+        if req.items is not None:
+            subtotal = 0.0
+            item_records = []
+            for item in req.items:
+                qty = float(item.get("quantity", 1))
+                rate = float(item.get("rate", 0))
+                amt = float(item.get("amount", round(qty * rate, 2)))
+                subtotal += amt
+                item_records.append({
+                    "id": generate_id(),
+                    "invoice_id": invoice_id,
+                    "description": item.get("description", ""),
+                    "item_type": item.get("item_type", "hourly"),
+                    "quantity": qty,
+                    "rate": rate,
+                    "amount": amt,
+                    "time_entry_id": item.get("time_entry_id"),
+                    "task_id": item.get("task_id"),
+                })
+        else:
+            subtotal = invoice["subtotal"] or 0.0
 
         tax_amount = round(subtotal * (req.tax_rate / 100.0), 2) if req.tax_rate else 0
         total = round(subtotal + tax_amount, 2)
@@ -2247,16 +2263,17 @@ async def update_invoice(invoice_id: str, req: InvoiceUpdate,
              req.tax_rate, tax_amount, subtotal, total, metadata, now, invoice_id)
         )
 
-        # Replace line items
-        db.execute("DELETE FROM invoice_items WHERE invoice_id = ?", (invoice_id,))
-        for item in item_records:
-            db.execute(
-                """INSERT INTO invoice_items (id, invoice_id, description, item_type, quantity, rate, amount,
-                   time_entry_id, task_id, created_at) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)""",
-                (item["id"], item["invoice_id"], item["description"], item["item_type"],
-                 item["quantity"], item["rate"], item["amount"],
-                 item["time_entry_id"], item["task_id"], now)
-            )
+        # Replace line items — only when the caller actually sent a new set
+        if item_records is not None:
+            db.execute("DELETE FROM invoice_items WHERE invoice_id = ?", (invoice_id,))
+            for item in item_records:
+                db.execute(
+                    """INSERT INTO invoice_items (id, invoice_id, description, item_type, quantity, rate, amount,
+                       time_entry_id, task_id, created_at) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)""",
+                    (item["id"], item["invoice_id"], item["description"], item["item_type"],
+                     item["quantity"], item["rate"], item["amount"],
+                     item["time_entry_id"], item["task_id"], now)
+                )
 
     return {"id": invoice_id, "total": total, "message": "Invoice updated"}
 

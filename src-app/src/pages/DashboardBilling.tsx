@@ -2622,6 +2622,11 @@ export default function DashboardBilling() {
   const [invForm,      setInvForm]      = useState<InvForm>({ ...EMPTY_INV })
   const [invSaving,    setInvSaving]    = useState(false)
   const [invError,     setInvError]     = useState('')
+  // The invoice's actual saved line items when opened for editing — used as
+  // the save fallback so editing (e.g. just the due date) doesn't silently
+  // wipe items that are no longer "unbilled" (they're already on THIS
+  // invoice) and therefore never get rebuilt by the unbilled-entries logic.
+  const [invEditOriginalItems, setInvEditOriginalItems] = useState<{ description: string; quantity: number; rate: number; amount: number; item_type?: string; task_id?: string; entity_name?: string }[]>([])
 
   // ── Invoice preview state
   const [previewInv,   setPreviewInv]   = useState<Invoice | null>(null)
@@ -2896,6 +2901,7 @@ export default function DashboardBilling() {
   const openNewInvoice = () => {
     setInvEditId(null)
     setInvForm({ ...EMPTY_INV, due_date: addDays(30), contract_ids: [] })
+    setInvEditOriginalItems([])
     setInvError('')
     setShowInvModal(true)
   }
@@ -2909,10 +2915,18 @@ export default function DashboardBilling() {
       full.items = data.items ?? []
       setInvEditId(full.id)
       setInvForm(invoiceToForm(full))
+      setInvEditOriginalItems((data.items ?? []).map(i => {
+        const raw = i as InvoiceItem & { task_id?: string; entity_name?: string }
+        return {
+          description: raw.description ?? '', quantity: raw.quantity ?? 1, rate: raw.rate ?? 0,
+          amount: raw.amount ?? 0, item_type: raw.item_type, task_id: raw.task_id, entity_name: raw.entity_name,
+        }
+      }))
       setShowInvModal(true)
     } catch {
       // Fall back to what we have in the list
       setInvEditId(inv.id)
+      setInvEditOriginalItems([])
       setInvForm(invoiceToForm(inv))
       setShowInvModal(true)
     }
@@ -3067,9 +3081,15 @@ export default function DashboardBilling() {
         }
         // Items will be overridden by invItemsOverride if the modal passed task-based items
       })
-      // Use the task-item override if it was set by InvoiceModal
-      const finalItems = (window as unknown as { _invTaskItems?: typeof items })._invTaskItems ?? items
+      // Priority: (1) task-item override if the modal's own task picker was
+      // used, (2) this invoice's actual existing items when just editing
+      // details like due date/notes — items already on THIS invoice aren't
+      // "unbilled" anymore, so the rebuild-from-entries loop above can never
+      // recover them, which used to silently wipe the invoice to $0 on any
+      // save, (3) the rebuilt-from-entries items, for a genuinely new invoice.
+      const taskItemOverride = (window as unknown as { _invTaskItems?: typeof items })._invTaskItems
       delete (window as unknown as { _invTaskItems?: typeof items })._invTaskItems
+      const finalItems = taskItemOverride ?? (invEditId && invEditOriginalItems.length > 0 ? invEditOriginalItems : items)
       const subtotal = finalItems.reduce((s, i) => s + (i.amount ?? 0), 0)
       const taxRate  = parseFloat(invForm.tax_rate || '0') || 0
 
