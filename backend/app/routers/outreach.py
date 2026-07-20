@@ -4212,6 +4212,164 @@ async def ai_edit_template(body: AITemplateEditRequest, current_user: dict = Dep
 
 
 # ---------------------------------------------------------------------------
+# PROCEEDING TYPES — tenant-owned matter/proceeding-type definitions
+# (Milestone 1: replaces the old hardcoded 3-value campaign_type enum)
+# ---------------------------------------------------------------------------
+
+_DEFAULT_PROCEEDING_TYPE_PRESETS = [
+    ("demand_letter", "Demand Letter"),
+    ("collection_notice", "Collection Notice"),
+    ("request_for_documents", "Request for Documents"),
+    ("notice_of_default", "Notice of Default"),
+    ("notice_of_intent_to_sue", "Notice of Intent to Sue"),
+    ("notice_of_intent_to_arbitrate", "Notice of Intent to Arbitrate"),
+    ("settlement_proposal", "Settlement Proposal"),
+    ("pre_litigation_notice", "Pre-Litigation Notice"),
+]
+
+
+def _slugify_proceeding_key(label: str) -> str:
+    import re
+    slug = re.sub(r"[^a-z0-9]+", "_", label.strip().lower()).strip("_")
+    return slug or generate_id()[:8]
+
+
+def _ensure_default_proceeding_types(db, tenant_id: str):
+    """Lazily seed the 8 preset proceeding types the first time a tenant
+    touches this feature. Seeded per-tenant — not one shared global row —
+    so every tenant's copy is independently editable/deletable without
+    affecting any other tenant's presets."""
+    existing = db.execute(
+        "SELECT COUNT(*) as n FROM outreach_proceeding_types WHERE tenant_id = ?",
+        (tenant_id,)
+    ).fetchone()["n"]
+    if existing > 0:
+        return
+    for i, (key, label) in enumerate(_DEFAULT_PROCEEDING_TYPE_PRESETS):
+        db.execute(
+            "INSERT INTO outreach_proceeding_types (id, tenant_id, key, label, is_preset, is_active, sort_order) "
+            "VALUES (?, ?, ?, ?, 1, 1, ?)",
+            (generate_id(), tenant_id, key, label, i)
+        )
+    db.commit()
+
+
+class ProceedingTypeCreate(BaseModel):
+    label: str
+    key: Optional[str] = None
+    description: Optional[str] = ""
+
+
+class ProceedingTypeUpdate(BaseModel):
+    label: Optional[str] = None
+    description: Optional[str] = None
+    is_active: Optional[bool] = None
+    sort_order: Optional[int] = None
+
+
+@router.get("/proceeding-types")
+async def list_proceeding_types(current_user: dict = Depends(get_current_user)):
+    """List this tenant's proceeding types — the picker used when creating a
+    campaign. Seeds the 8 presets on first use for this tenant."""
+    tenant_id = current_user["tenant_id"]
+    with get_db() as db:
+        _ensure_default_proceeding_types(db, tenant_id)
+        rows = db.execute(
+            "SELECT * FROM outreach_proceeding_types WHERE tenant_id = ? AND is_active = 1 ORDER BY sort_order, label",
+            (tenant_id,)
+        ).fetchall()
+        return {"proceeding_types": [dict(r) for r in rows]}
+
+
+@router.post("/proceeding-types")
+async def create_proceeding_type(req: ProceedingTypeCreate, current_user: dict = Depends(get_current_user)):
+    """Add a tenant-defined custom proceeding type — the spec's "(i) a
+    custom proceeding or outreach type entered by the tenant." Used exactly
+    the same as a preset; there is no code path that treats presets
+    differently from custom types after creation."""
+    tenant_id = current_user["tenant_id"]
+    label = req.label.strip()
+    if not label:
+        raise HTTPException(status_code=400, detail="label is required")
+    key = _slugify_proceeding_key(req.key or label)
+    with get_db() as db:
+        existing = db.execute(
+            "SELECT id FROM outreach_proceeding_types WHERE tenant_id = ? AND key = ?",
+            (tenant_id, key)
+        ).fetchone()
+        if existing:
+            raise HTTPException(status_code=400, detail=f"A proceeding type with key '{key}' already exists")
+        max_sort = db.execute(
+            "SELECT COALESCE(MAX(sort_order), -1) as m FROM outreach_proceeding_types WHERE tenant_id = ?",
+            (tenant_id,)
+        ).fetchone()["m"]
+        new_id = generate_id()
+        db.execute(
+            "INSERT INTO outreach_proceeding_types "
+            "(id, tenant_id, key, label, description, is_preset, is_active, sort_order, created_by) "
+            "VALUES (?, ?, ?, ?, ?, 0, 1, ?, ?)",
+            (new_id, tenant_id, key, label, req.description or "", max_sort + 1, current_user["sub"])
+        )
+        db.commit()
+        row = db.execute("SELECT * FROM outreach_proceeding_types WHERE id = ?", (new_id,)).fetchone()
+        return dict(row)
+
+
+@router.patch("/proceeding-types/{type_id}")
+async def update_proceeding_type(type_id: str, req: ProceedingTypeUpdate, current_user: dict = Depends(get_current_user)):
+    """Edit a proceeding type — including a preset. There's no lock on
+    presets; a tenant can rename/retire "Demand Letter" just as freely as
+    their own custom type."""
+    tenant_id = current_user["tenant_id"]
+    with get_db() as db:
+        row = db.execute(
+            "SELECT * FROM outreach_proceeding_types WHERE id = ? AND tenant_id = ?",
+            (type_id, tenant_id)
+        ).fetchone()
+        if not row:
+            raise HTTPException(status_code=404, detail="Proceeding type not found")
+        updates = {}
+        if req.label is not None:
+            stripped = req.label.strip()
+            if not stripped:
+                raise HTTPException(status_code=400, detail="label cannot be blank")
+            updates["label"] = stripped
+        if req.description is not None:
+            updates["description"] = req.description
+        if req.is_active is not None:
+            updates["is_active"] = 1 if req.is_active else 0
+        if req.sort_order is not None:
+            updates["sort_order"] = req.sort_order
+        if updates:
+            set_clause = ", ".join(f"{k} = ?" for k in updates)
+            db.execute(
+                f"UPDATE outreach_proceeding_types SET {set_clause}, updated_at = CURRENT_TIMESTAMP WHERE id = ?",
+                (*updates.values(), type_id)
+            )
+            db.commit()
+        row = db.execute("SELECT * FROM outreach_proceeding_types WHERE id = ?", (type_id,)).fetchone()
+        return dict(row)
+
+
+@router.delete("/proceeding-types/{type_id}")
+async def delete_proceeding_type(type_id: str, current_user: dict = Depends(get_current_user)):
+    """Delete a proceeding type. Existing campaigns keep displaying correctly
+    afterward — case_campaigns.campaign_type is a denormalized snapshot of
+    the key, not a live join, so nothing about a past campaign breaks."""
+    tenant_id = current_user["tenant_id"]
+    with get_db() as db:
+        row = db.execute(
+            "SELECT id FROM outreach_proceeding_types WHERE id = ? AND tenant_id = ?",
+            (type_id, tenant_id)
+        ).fetchone()
+        if not row:
+            raise HTTPException(status_code=404, detail="Proceeding type not found")
+        db.execute("DELETE FROM outreach_proceeding_types WHERE id = ?", (type_id,))
+        db.commit()
+    return {"ok": True}
+
+
+# ---------------------------------------------------------------------------
 # EMAIL CAMPAIGNS — Staged sequences with supervisor approval
 # ---------------------------------------------------------------------------
 
@@ -4233,6 +4391,13 @@ class CampaignCreate(BaseModel):
     # Which 5-stage wording track drives all 5 emails — never mixed within
     # one campaign. "document_execution_request" requires document_ids.
     campaign_type: str = "outstanding_amount"  # or "document_execution_request"
+    # Optional link to the tenant's own outreach_proceeding_types row (the
+    # picker the tenant actually sees). Purely denormalized/informational in
+    # Milestone 1 — campaign_type above still drives which wording track
+    # renders; this just records which named proceeding type the tenant
+    # selected for display purposes, ahead of Milestone 3 wiring it into
+    # rendering.
+    proceeding_type_id: Optional[str] = None
     document_ids: Optional[List[str]] = None
     # Schedule: days after campaign creation to send each email
     schedule_day_1: int = 0     # Initial Demand — immediately after approval
@@ -4364,16 +4529,29 @@ async def create_campaign(case_id: str, req: CampaignCreate, current_user: dict 
             for t in _FOLLOWUP_STAGE_TYPES.get(campaign_type, ())
         } if campaign_type in _FOLLOWUP_STAGE_TYPES else {}
 
+        # If the tenant picked a proceeding type but the underlying wording
+        # track (campaign_type) wasn't explicitly set to match, fall back to
+        # the proceeding type's own key — lets the New Campaign flow start
+        # driving campaign_type from the tenant-owned picker without a
+        # separate migration step.
+        proceeding_type_row = None
+        if req.proceeding_type_id:
+            proceeding_type_row = db.execute(
+                "SELECT * FROM outreach_proceeding_types WHERE id = ? AND tenant_id = ?",
+                (req.proceeding_type_id, tenant_id)
+            ).fetchone()
+
         campaign_id = generate_id()
         db.execute(
             """INSERT INTO case_campaigns (id, case_id, tenant_id, created_by, firm_name, firm_address,
                firm_phone, from_name, additional_notes, status, litigation_type, campaign_type,
-               schedule_day_1, schedule_day_2, schedule_day_3, schedule_day_4, schedule_day_5,
+               proceeding_type_id, schedule_day_1, schedule_day_2, schedule_day_3, schedule_day_4, schedule_day_5,
                created_at, updated_at)
-               VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, 'pending_approval', ?, ?, ?, ?, ?, ?, ?, ?, ?)""",
+               VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, 'pending_approval', ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)""",
             (campaign_id, case_id, tenant_id, user_id, firm_name, firm_address,
              firm_phone, sender_name, req.additional_notes or "",
              req.litigation_type, campaign_type,
+             proceeding_type_row["id"] if proceeding_type_row else None,
              req.schedule_day_1, req.schedule_day_2, req.schedule_day_3, req.schedule_day_4,
              req.schedule_day_5, now, now)
         )

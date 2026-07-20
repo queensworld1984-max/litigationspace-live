@@ -918,6 +918,13 @@ def init_db():
         _fix_orphaned_campaign_emails_table(db)
         _create_outreach_campaign_tables(db)
 
+        # Tenant-owned proceeding types (replaces the old hardcoded 3-value
+        # campaign_type enum) — ERTC Funding's existing 2 types become
+        # ordinary rows here, not special-cased in code
+        _create_outreach_proceeding_types_table(db)
+        _migrate_case_campaigns_proceeding_type_column(db)
+        _migrate_seed_ertc_proceeding_types(db)
+
         # Per-case external collaborators (Case Team & Access invite panel)
         _create_case_collaborators_table(db)
 
@@ -1725,6 +1732,105 @@ def _migrate_case_campaigns_type_column(db):
             print("[MIGRATION] Added campaign_type column to case_campaigns table")
     except Exception as e:
         print(f"[MIGRATION WARNING] case_campaigns campaign_type: {e}")
+
+
+def _create_outreach_proceeding_types_table(db):
+    """Tenant-owned "proceeding type" definitions (demand letter, collection
+    notice, notice of intent to arbitrate, a tenant's own custom type, etc.)
+    — replaces the old hardcoded 3-value campaign_type enum. Each tenant's
+    rows are fully independent: no shared/global row, so one tenant editing
+    or deleting a type never affects another tenant. `is_preset` just marks
+    which rows came from the seeded starter list vs. a tenant-authored
+    custom type — both are equally editable/deletable."""
+    db.executescript("""
+        CREATE TABLE IF NOT EXISTS outreach_proceeding_types (
+            id TEXT PRIMARY KEY,
+            tenant_id TEXT NOT NULL,
+            key TEXT NOT NULL,
+            label TEXT NOT NULL,
+            description TEXT DEFAULT '',
+            is_preset INTEGER DEFAULT 0,
+            is_active INTEGER DEFAULT 1,
+            sort_order INTEGER DEFAULT 0,
+            created_by TEXT,
+            created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+            updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+            UNIQUE(tenant_id, key)
+        );
+    """)
+
+
+def _migrate_case_campaigns_proceeding_type_column(db):
+    """Add proceeding_type_id — a nullable FK-by-convention to
+    outreach_proceeding_types.id. campaign_type itself is left in place as
+    a denormalized snapshot of the proceeding type's key at creation time,
+    so historical campaigns keep displaying correctly even if a tenant
+    later renames or deletes that proceeding type."""
+    try:
+        cols = {c["name"] for c in db.execute("PRAGMA table_info(case_campaigns)").fetchall()}
+        if cols and "proceeding_type_id" not in cols:
+            db.execute("ALTER TABLE case_campaigns ADD COLUMN proceeding_type_id TEXT")
+            print("[MIGRATION] Added proceeding_type_id column to case_campaigns table")
+    except Exception as e:
+        print(f"[MIGRATION WARNING] case_campaigns proceeding_type_id: {e}")
+
+
+def _migrate_seed_ertc_proceeding_types(db):
+    """One-time, idempotent backfill: ERTC Funding's two campaign types
+    (document_execution_request, peo_authorization) — built this session as
+    hardcoded Python template functions before the tenant-owned proceeding-type
+    system existed — become ordinary outreach_proceeding_types rows scoped to
+    ERTC's own tenant_id, and their existing case_campaigns rows get
+    proceeding_type_id backfilled to match. Nothing is special-cased in code
+    after this; ERTC's campaign types are just one tenant's data like any
+    other tenant's would be. Safe to run on every boot — every step checks
+    for existing rows first."""
+    import uuid
+    # Matched by the known tenant_id first — the tenant's `name` column
+    # actually reads "ERCT Funding" (a pre-existing data-entry typo, C/T
+    # swapped), so a name-based LIKE '%ertc%' silently matches nothing. Fall
+    # back to a broader name match for other environments (e.g. local dev)
+    # where this exact row may not exist.
+    _ERTC_TENANT_ID = "02cfab98-5fcb-49f7-bb9d-e747136074fe"
+    try:
+        tenant_row = db.execute(
+            "SELECT id FROM tenants WHERE id = ?", (_ERTC_TENANT_ID,)
+        ).fetchone()
+        if not tenant_row:
+            tenant_row = db.execute(
+                "SELECT id FROM tenants WHERE LOWER(name) LIKE '%ertc%' OR LOWER(name) LIKE '%erct%'"
+            ).fetchone()
+        if not tenant_row:
+            return
+        tenant_id = tenant_row["id"]
+
+        seed_types = [
+            ("document_execution_request", "Request to Execute Required Document"),
+            ("peo_authorization", "PEO Authorization"),
+        ]
+        for key, label in seed_types:
+            existing = db.execute(
+                "SELECT id FROM outreach_proceeding_types WHERE tenant_id = ? AND key = ?",
+                (tenant_id, key)
+            ).fetchone()
+            if existing:
+                type_id = existing["id"]
+            else:
+                type_id = str(uuid.uuid4())
+                db.execute(
+                    "INSERT INTO outreach_proceeding_types (id, tenant_id, key, label, is_preset, is_active) "
+                    "VALUES (?, ?, ?, ?, 0, 1)",
+                    (type_id, tenant_id, key, label)
+                )
+                print(f"[MIGRATION] Seeded ERTC Funding proceeding type '{label}'")
+
+            db.execute(
+                "UPDATE case_campaigns SET proceeding_type_id = ? "
+                "WHERE tenant_id = ? AND campaign_type = ? AND proceeding_type_id IS NULL",
+                (type_id, tenant_id, key)
+            )
+    except Exception as e:
+        print(f"[MIGRATION WARNING] ERTC proceeding type seed: {e}")
 
 
 def _fix_orphaned_campaign_emails_table(db):
