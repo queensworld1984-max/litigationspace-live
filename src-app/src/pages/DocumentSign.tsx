@@ -310,7 +310,7 @@ export default function DocumentSign() {
                   value={formValues[f.key] ?? ''}
                   onChange={e => setFormValues(p => ({ ...p, [f.key]: e.target.value }))}
                   placeholder={`Enter ${f.label.toLowerCase()}`}
-                  style={{ width: '100%', boxSizing: 'border-box', padding: '10px 12px', borderRadius: 8, border: '1.5px solid #d1d5db', fontSize: 13.5, outline: 'none', fontFamily: 'inherit' }}
+                  style={{ width: '100%', boxSizing: 'border-box', padding: '10px 12px', borderRadius: 8, border: '1.5px solid #d1d5db', fontSize: 13.5, outline: 'none', fontFamily: 'inherit', color: '#111827', background: '#ffffff' }}
                 />
               </div>
             ))}
