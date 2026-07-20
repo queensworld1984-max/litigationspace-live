@@ -70,6 +70,10 @@ interface Signature {
   city?: string; state?: string; postal_code?: string; country?: string
   custom_line?: string
 }
+interface ProceedingType {
+  id: string; key: string; label: string; description?: string
+  is_preset: boolean | number; is_active: boolean | number; sort_order?: number
+}
 interface DebtorResponse {
   id: string; contact_id: string; response_type: string; response_method: string
   summary: string; amount_offered?: number; created_at: string
@@ -266,12 +270,13 @@ function ThreadRow({ item }: { item: ThreadItem }) {
   )
 }
 
-type SubTab = 'contacts'|'templates'|'signatures'|'campaigns'|'compose'|'responses'|'supervisor'|'history'
+type SubTab = 'contacts'|'templates'|'signatures'|'proceeding_types'|'campaigns'|'compose'|'responses'|'supervisor'|'history'
 
 const SUB_TABS: { id: SubTab; label: string }[] = [
   { id: 'contacts',   label: 'Contacts' },
   { id: 'templates',  label: 'Email Templates' },
   { id: 'signatures', label: 'Email Signatures' },
+  { id: 'proceeding_types', label: 'Proceeding Types' },
   { id: 'campaigns',  label: 'Campaigns' },
   { id: 'compose',    label: 'Compose Email' },
   { id: 'responses',  label: 'Responses & Actions' },
@@ -282,7 +287,11 @@ const SUB_TABS: { id: SubTab; label: string }[] = [
 // ── Empty form presets ────────────────────────────────────────────────────────
 const EMPTY_CT  = { name: '', email: '', phone: '', company: '', party_role: '', contact_title: '', amount_owed: '', currency: 'USD', notes: '', address_line1: '', address_line2: '', city: '', state: '', postal_code: '', country: '' }
 const EMPTY_SIG = { name: '', sender_name: '', sender_title: '', sender_email: '', sender_phone: '', company_name: '', logo_url: '', website_url: '', address_line1: '', address_line2: '', city: '', state: '', postal_code: '', country: '', accent_color: '#C8992A', layout: 'horizontal', is_default: false as boolean, custom_line: '' }
-const EMPTY_CAMP = { contact_ids: [] as string[], firm_name: '', firm_address: '', firm_phone: '', from_name: '', additional_notes: '', litigation_type: 'Demand for Arbitration', campaign_type: 'outstanding_amount' as 'outstanding_amount' | 'document_execution_request' | 'peo_authorization', document_ids: [] as string[], schedule_day_1: 0, schedule_day_2: 14, schedule_day_3: 28, schedule_day_4: 42, schedule_day_5: 49, filed_quarters: '', additional_quarter: '', contingency_fee_text: '' }
+const EMPTY_CAMP = { contact_ids: [] as string[], firm_name: '', firm_address: '', firm_phone: '', from_name: '', additional_notes: '', litigation_type: 'Demand for Arbitration', campaign_type: 'outstanding_amount' as string, proceeding_type_id: '', document_ids: [] as string[], schedule_day_1: 0, schedule_day_2: 14, schedule_day_3: 28, schedule_day_4: 42, schedule_day_5: 49, filed_quarters: '', additional_quarter: '', contingency_fee_text: '' }
+// The 3 keys that currently have their own dedicated 5-stage wording. Any
+// other proceeding type a tenant picks/creates renders using the generic
+// "Outstanding Amount" track until Milestone 3 wires the clause library in.
+const _RENDERABLE_CAMPAIGN_TYPE_KEYS = ['outstanding_amount', 'document_execution_request', 'peo_authorization']
 
 // ── Main Component ────────────────────────────────────────────────────────────
 interface Props { caseId: string; onLoad?: (n: number) => void }
@@ -298,6 +307,7 @@ export default function CaseOutreach({ caseId, onLoad }: Props) {
   const [emails,       setEmails]       = useState<OutreachEmail[]>([])
   const [campaigns,    setCampaigns]    = useState<Campaign[]>([])
   const [signatures,   setSignatures]   = useState<Signature[]>([])
+  const [proceedingTypes, setProceedingTypes] = useState<ProceedingType[]>([])
   const [responses,    setResponses]    = useState<DebtorResponse[]>([])
   const [escalations,  setEscalations]  = useState<Escalation[]>([])
   const [settlements,  setSettlements]  = useState<Settlement[]>([])
@@ -306,7 +316,7 @@ export default function CaseOutreach({ caseId, onLoad }: Props) {
   const [caseInfo,     setCaseInfo]     = useState<{ title?: string; client_name?: string; opposing_party?: string } | null>(null)
 
   // ── Modal state ──────────────────────────────────────────────────────────────
-  type ModalKey = 'contact'|'template-preview'|'template-edit'|'template-ai'|'signature'|'sig-from-contact'|'campaign-create'|'campaign-email-edit'|'campaign-send-approval'|'send-document'|'thread'|null
+  type ModalKey = 'contact'|'template-preview'|'template-edit'|'template-ai'|'signature'|'sig-from-contact'|'proceeding-type'|'campaign-create'|'campaign-email-edit'|'campaign-send-approval'|'send-document'|'thread'|null
   const [modal,     setModal]     = useState<ModalKey>(null)
   const [modalData, setModalData] = useState<Record<string, any>>({})
 
@@ -341,6 +351,12 @@ export default function CaseOutreach({ caseId, onLoad }: Props) {
   const [logoUploading, setLogoUploading] = useState(false)
   const [logoUploadError, setLogoUploadError] = useState('')
   const logoFileInputRef = useRef<HTMLInputElement>(null)
+
+  // ── Proceeding type form ──────────────────────────────────────────────────────
+  const [ptForm,    setPtForm]    = useState({ label: '', description: '' })
+  const [ptEditing, setPtEditing] = useState<string | null>(null)
+  const [ptSaving,  setPtSaving]  = useState(false)
+  const [ptError,   setPtError]   = useState('')
 
   // ── Campaign form ─────────────────────────────────────────────────────────────
   const [campForm,    setCampForm]    = useState({ ...EMPTY_CAMP })
@@ -418,6 +434,12 @@ export default function CaseOutreach({ caseId, onLoad }: Props) {
       .catch(() => {}).finally(() => setLoaded(p => ({ ...p, signatures: true })))
   }, [])
 
+  const loadProceedingTypes = useCallback(() => {
+    axios.get('/api/outreach/proceeding-types', { headers: hdr() })
+      .then(r => { const d = r.data?.data ?? r.data ?? []; setProceedingTypes(Array.isArray(d) ? d : []) })
+      .catch(() => {}).finally(() => setLoaded(p => ({ ...p, proceeding_types: true })))
+  }, [])
+
   const loadResponses = useCallback(() => {
     Promise.all([
       axios.get(`/api/outreach/cases/${caseId}/responses`,   { headers: hdr() }).catch(() => null),
@@ -456,12 +478,14 @@ export default function CaseOutreach({ caseId, onLoad }: Props) {
   useEffect(() => {
     if (subTab === 'templates'  && !loaded.templates)  loadTplSettings()
     if (subTab === 'signatures' && !loaded.signatures) loadSignatures()
+    if (subTab === 'proceeding_types' && !loaded.proceeding_types) loadProceedingTypes()
     if (subTab === 'campaigns'  && !loaded.campaigns)  loadCampaigns()
     if (subTab === 'campaigns'  && !loaded.signatures) loadSignatures()
+    if (subTab === 'campaigns'  && !loaded.proceeding_types) loadProceedingTypes()
     if (subTab === 'responses'  && !loaded.responses)  loadResponses()
     if (subTab === 'supervisor' && !loaded.supervisor) loadInstructions()
     if (subTab === 'compose'    && !loaded.signatures) loadSignatures()
-  }, [subTab, loaded, loadTplSettings, loadSignatures, loadCampaigns, loadResponses, loadInstructions])
+  }, [subTab, loaded, loadTplSettings, loadSignatures, loadProceedingTypes, loadCampaigns, loadResponses, loadInstructions])
 
   // ── localStorage auto-save restore (on mount) ────────────────────────────────
   // eslint-disable-next-line react-hooks/exhaustive-deps
@@ -920,6 +944,35 @@ export default function CaseOutreach({ caseId, onLoad }: Props) {
     await axios.post(`/api/outreach/email-signatures/${id}/set-default`, {}, { headers: jHdr() }).catch(() => {})
     loadSignatures()
   }
+
+  // ── Proceeding types CRUD ─────────────────────────────────────────────────────
+  function openAddPt() { setPtForm({ label: '', description: '' }); setPtEditing(null); setPtError(''); setModal('proceeding-type') }
+  function openEditPt(pt: ProceedingType) {
+    setPtForm({ label: pt.label, description: pt.description ?? '' })
+    setPtEditing(pt.id); setPtError(''); setModal('proceeding-type')
+  }
+  async function savePt() {
+    if (!ptForm.label.trim()) { setPtError('A label is required.'); return }
+    setPtSaving(true); setPtError('')
+    try {
+      if (ptEditing) await axios.patch(`/api/outreach/proceeding-types/${ptEditing}`, ptForm, { headers: jHdr() })
+      else           await axios.post('/api/outreach/proceeding-types', ptForm, { headers: jHdr() })
+      setModal(null); loadProceedingTypes()
+    } catch (err: unknown) {
+      const axErr = err as { response?: { data?: { detail?: string } } }
+      setPtError(axErr.response?.data?.detail || 'Failed to save proceeding type. Please try again.')
+    }
+    setPtSaving(false)
+  }
+  async function deletePt(id: string) {
+    if (!confirm('Delete this proceeding type? Existing campaigns that used it keep working.')) return
+    try {
+      await axios.delete(`/api/outreach/proceeding-types/${id}`, { headers: hdr() })
+      setProceedingTypes(p => p.filter(t => t.id !== id))
+    } catch {
+      alert('Failed to delete proceeding type. Please try again.')
+    }
+  }
   async function createSigFromContact(contactId: string) {
     await axios.post(`/api/outreach/email-signatures/from-contact/${contactId}?case_id=${caseId}`, {}, { headers: jHdr() }).catch(() => {})
     setModal(null); loadSignatures()
@@ -1331,6 +1384,42 @@ export default function CaseOutreach({ caseId, onLoad }: Props) {
                   </div>
                 )
               })}
+            </div>
+          )}
+        </div>
+      )}
+
+      {/* ── PROCEEDING TYPES ── */}
+      {subTab === 'proceeding_types' && (
+        <div>
+          <div style={{ display: 'flex', gap: 10, alignItems: 'center', marginBottom: 12, flexWrap: 'wrap' }}>
+            <span style={{ color: T1, fontWeight: 700, fontSize: '1rem', flex: 1 }}>Proceeding Types</span>
+            <button onClick={openAddPt} style={btn('gold')}>+ Add Custom Type</button>
+          </div>
+          <p style={{ color: T3, fontSize: '0.8rem', marginBottom: 16 }}>
+            The matter/proceeding type a campaign is about — demand letter, collection notice, notice of intent to arbitrate, or your own custom type.
+            Selected verbatim when creating a campaign; never auto-substituted for a different proceeding type.
+          </p>
+          {proceedingTypes.length === 0 ? <Empty msg="No proceeding types yet." /> : (
+            <div style={{ display: 'flex', flexDirection: 'column', gap: 8 }}>
+              {proceedingTypes.map(pt => (
+                <div key={pt.id} style={{ ...card, display: 'flex', justifyContent: 'space-between', alignItems: 'center', padding: '10px 14px' }}>
+                  <div>
+                    <div style={{ color: T1, fontWeight: 700, fontSize: '0.85rem', display: 'flex', alignItems: 'center', gap: 8 }}>
+                      {pt.label}
+                      {(pt.is_preset === 1 || pt.is_preset === true) && <span style={{ background: INPBG, border: `1px solid ${BD}`, color: T3, padding: '1px 7px', borderRadius: 4, fontSize: '0.62rem', fontWeight: 700 }}>PRESET</span>}
+                      {!_RENDERABLE_CAMPAIGN_TYPE_KEYS.includes(pt.key) && (
+                        <span title="This proceeding type doesn't have its own dedicated letter wording yet — campaigns using it render with the generic Outstanding Amount template." style={{ color: '#f59e0b', fontSize: '0.62rem', fontWeight: 700, cursor: 'help' }}>⚠ generic wording for now</span>
+                      )}
+                    </div>
+                    {pt.description && <div style={{ color: T3, fontSize: '0.75rem', marginTop: 2 }}>{pt.description}</div>}
+                  </div>
+                  <div style={{ display: 'flex', gap: 6 }}>
+                    <button onClick={() => openEditPt(pt)} style={{ ...btn('outline'), padding: '3px 9px', fontSize: '0.7rem', color: '#60a5fa', borderColor: '#60a5fa44' }}>Edit</button>
+                    <button onClick={() => deletePt(pt.id)} style={{ ...btn('outline'), padding: '3px 9px', fontSize: '0.7rem', color: '#f87171', borderColor: '#f8717144' }}>Delete</button>
+                  </div>
+                </div>
+              ))}
             </div>
           )}
         </div>
@@ -2078,6 +2167,32 @@ export default function CaseOutreach({ caseId, onLoad }: Props) {
         </ModalWrap>
       )}
 
+      {/* Proceeding Type Modal */}
+      {modal === 'proceeding-type' && (
+        <ModalWrap onClose={() => setModal(null)} maxW={480}>
+          <MHead title={ptEditing ? 'Edit Proceeding Type' : 'Add Custom Proceeding Type'} onClose={() => setModal(null)} />
+          <div style={{ padding: 20 }}>
+            <div style={{ marginBottom: 12 }}>
+              <label style={lbl}>Label *</label>
+              <input style={inp} value={ptForm.label} onChange={e => setPtForm(p => ({ ...p, label: e.target.value }))} placeholder="e.g. Missing Authorization Notice" />
+            </div>
+            <div style={{ marginBottom: 14 }}>
+              <label style={lbl}>Description (optional)</label>
+              <textarea style={{ ...inp, minHeight: 70, resize: 'vertical' }} value={ptForm.description} onChange={e => setPtForm(p => ({ ...p, description: e.target.value }))} placeholder="What this proceeding type is used for" />
+            </div>
+            {ptError && (
+              <div style={{ background: 'rgba(239,68,68,0.1)', border: '1px solid rgba(239,68,68,0.35)', borderRadius: 8, padding: '9px 12px', marginBottom: 12, color: '#fca5a5', fontSize: '0.82rem' }}>
+                {ptError}
+              </div>
+            )}
+            <div style={{ display: 'flex', gap: 8, justifyContent: 'flex-end' }}>
+              <button onClick={() => setModal(null)} style={btn('gray')}>Cancel</button>
+              <button onClick={savePt} disabled={ptSaving} style={btn('gold')}>{ptSaving ? 'Saving…' : ptEditing ? 'Update' : 'Add'}</button>
+            </div>
+          </div>
+        </ModalWrap>
+      )}
+
       {/* Create Sig from Contact Modal */}
       {modal === 'sig-from-contact' && (
         <ModalWrap onClose={() => setModal(null)} maxW={480}>
@@ -2127,21 +2242,28 @@ export default function CaseOutreach({ caseId, onLoad }: Props) {
               })}
             </div>
             <div style={{ marginBottom: 14 }}>
-              <label style={lbl}>Campaign Type — drives the wording for all 5 stages</label>
-              <div style={{ display: 'flex', gap: 8 }}>
-                <button type="button" onClick={() => setCampForm(p => ({ ...p, campaign_type: 'outstanding_amount' }))}
-                  style={{ flex: 1, padding: '10px', borderRadius: 8, border: `2px solid ${campForm.campaign_type === 'outstanding_amount' ? '#f59e0b' : BD}`, background: campForm.campaign_type === 'outstanding_amount' ? 'rgba(245,158,11,0.1)' : INPBG, color: campForm.campaign_type === 'outstanding_amount' ? '#f59e0b' : T2, fontSize: '0.8rem', fontWeight: 700, cursor: 'pointer' }}>
-                  Outstanding Amount
-                </button>
-                <button type="button" onClick={() => setCampForm(p => ({ ...p, campaign_type: 'document_execution_request' }))}
-                  style={{ flex: 1, padding: '10px', borderRadius: 8, border: `2px solid ${campForm.campaign_type === 'document_execution_request' ? '#d97706' : BD}`, background: campForm.campaign_type === 'document_execution_request' ? 'rgba(217,119,6,0.1)' : INPBG, color: campForm.campaign_type === 'document_execution_request' ? '#d97706' : T2, fontSize: '0.8rem', fontWeight: 700, cursor: 'pointer' }}>
-                  Request to Execute Required Document
-                </button>
-                <button type="button" onClick={() => setCampForm(p => ({ ...p, campaign_type: 'peo_authorization' }))}
-                  style={{ flex: 1, padding: '10px', borderRadius: 8, border: `2px solid ${campForm.campaign_type === 'peo_authorization' ? '#7c3aed' : BD}`, background: campForm.campaign_type === 'peo_authorization' ? 'rgba(124,58,237,0.1)' : INPBG, color: campForm.campaign_type === 'peo_authorization' ? '#7c3aed' : T2, fontSize: '0.8rem', fontWeight: 700, cursor: 'pointer' }}>
-                  PEO Authorization
-                </button>
+              <div style={{ display: 'flex', alignItems: 'center', gap: 8, marginBottom: 6 }}>
+                <label style={{ ...lbl, marginBottom: 0, flex: 1 }}>Proceeding Type — what this campaign is about</label>
+                <button type="button" onClick={openAddPt} style={{ ...btn('outline'), padding: '3px 9px', fontSize: '0.7rem' }}>+ Custom Type</button>
               </div>
+              <div style={{ display: 'flex', gap: 8, flexWrap: 'wrap' }}>
+                {proceedingTypes.map(pt => {
+                  const selected = campForm.proceeding_type_id === pt.id
+                  const renderable = _RENDERABLE_CAMPAIGN_TYPE_KEYS.includes(pt.key)
+                  return (
+                    <button key={pt.id} type="button"
+                      onClick={() => setCampForm(p => ({ ...p, proceeding_type_id: pt.id, campaign_type: renderable ? pt.key : 'outstanding_amount' }))}
+                      style={{ padding: '10px 14px', borderRadius: 8, border: `2px solid ${selected ? GOLD : BD}`, background: selected ? GOLD + '1a' : INPBG, color: selected ? GOLD : T2, fontSize: '0.8rem', fontWeight: 700, cursor: 'pointer' }}>
+                      {pt.label}
+                    </button>
+                  )
+                })}
+              </div>
+              {campForm.proceeding_type_id && !_RENDERABLE_CAMPAIGN_TYPE_KEYS.includes(campForm.campaign_type) && (
+                <p style={{ color: '#f59e0b', fontSize: '0.75rem', margin: '8px 0 0' }}>
+                  ⚠ This proceeding type doesn't have its own dedicated letter wording yet — this campaign will use the generic Outstanding Amount template for all 5 stages.
+                </p>
+              )}
               {(campForm.campaign_type === 'document_execution_request' || campForm.campaign_type === 'peo_authorization') && (
                 <div style={{ marginTop: 10, padding: '10px 12px', background: INPBG, border: `1px solid ${BD}`, borderRadius: 8 }}>
                   <label style={lbl}>{campForm.campaign_type === 'peo_authorization' ? 'PEO Authorization document — a sign link is created once per recipient and carried through all 5 stages' : 'Document(s) — a sign link is created once per recipient and carried through all 5 stages'}</label>
