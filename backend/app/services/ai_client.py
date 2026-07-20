@@ -15,7 +15,7 @@ ANTHROPIC_API_KEY = os.environ.get("ANTHROPIC_API_KEY", "")
 OPENAI_API_KEY = os.environ.get("OPENAI_API_KEY", "")
 
 # Claude model — using latest sonnet for legal drafting
-CLAUDE_MODEL = "claude-sonnet-4-20250514"
+CLAUDE_MODEL = "claude-sonnet-5"
 OPENAI_MODEL      = "gpt-5.4"       # paid users (admin, attorney)
 OPENAI_MODEL_FREE = "gpt-5.4-mini"  # free users (paralegal, client)
 
@@ -66,9 +66,11 @@ async def call_claude(
                 "content-type": "application/json",
             },
             json={
+                # `temperature` deliberately omitted — CLAUDE_MODEL (Sonnet 5)
+                # rejects it with a 400 ("temperature is deprecated for this
+                # model"), unlike older Claude snapshots.
                 "model": CLAUDE_MODEL,
                 "max_tokens": max_tokens,
-                "temperature": temperature,
                 "system": system_prompt,
                 "messages": [{"role": "user", "content": user_message}],
             },
@@ -200,9 +202,9 @@ def call_claude_sync(
                 "content-type": "application/json",
             },
             json={
+                # `temperature` deliberately omitted — see call_claude() above.
                 "model": CLAUDE_MODEL,
                 "max_tokens": max_tokens,
-                "temperature": temperature,
                 "system": system_prompt,
                 "messages": [{"role": "user", "content": user_message}],
             },

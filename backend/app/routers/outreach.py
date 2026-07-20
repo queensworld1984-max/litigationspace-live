@@ -24,6 +24,7 @@ from app.utils.email import (
     send_document_uploaded_thankyou_email, send_document_signed_firm_notify_email,
     parse_recipients,
 )
+from app.services.ai_client import call_claude
 
 APPROVAL_TOKEN_EXPIRY_HOURS = 168  # 7 days
 
@@ -167,6 +168,16 @@ def _signature_firm_identity(sig_row) -> tuple:
         s.get("city"), s.get("state"), s.get("postal_code"), s.get("country"),
     ]))
     return s.get("company_name") or "", addr, s.get("sender_phone") or "", s.get("logo_url") or ""
+
+
+def _campaign_type_label(campaign_type: str) -> str:
+    """Human-readable label for a campaign_type value, shared by every
+    campaign summary/detail endpoint so the mapping only lives in one place."""
+    return (
+        "Request to Execute Required Document" if campaign_type == "document_execution_request"
+        else "PEO Authorization" if campaign_type == "peo_authorization"
+        else "Outstanding Amount"
+    )
 
 
 def _build_email_footer(firm_name: str, firm_address: str = "", firm_phone: str = "") -> str:
@@ -4172,40 +4183,25 @@ async def delete_custom_template(template_type: str, current_user: dict = Depend
     return {"ok": True}
 
 
-@router.post("/template-ai-edit")
-async def ai_edit_template(body: AITemplateEditRequest, current_user: dict = Depends(get_current_user)):
-    """Use AI (Anthropic) to edit a template's plain-text body based on user
-    instructions."""
-    import anthropic
-    api_key = os.environ.get("ANTHROPIC_API_KEY")
-    if not api_key:
-        raise HTTPException(status_code=500, detail="No AI provider configured. Set ANTHROPIC_API_KEY.")
-
-    try:
-        client = anthropic.Anthropic(api_key=api_key)
-        message = client.messages.create(
-            model="claude-sonnet-4-20250514",
-            max_tokens=2048,
-            messages=[{
-                "role": "user",
-                "content": f"""You are an expert legal correspondence editor. You will be given the plain-text body of a demand/notice letter and instructions to modify it.
+_AI_TEMPLATE_EDIT_SYSTEM_PROMPT = """You are an expert legal correspondence editor. You will be given the plain-text body of a demand/notice letter and instructions to modify it.
 
 Rules:
 - Return ONLY the modified plain-text body — no explanations, no markdown, no HTML.
 - Paragraphs are separated by a blank line.
 - Preserve every [Bracket Token] exactly as written (e.g. [Amount Owed], [Recipient Name], [Response Deadline Days], [Document Links]) — these are placeholders filled in automatically per recipient and must not be renamed, translated, or removed unless the user explicitly asks to remove that information.
-- Keep the tone professional and legally appropriate.
+- Keep the tone professional and legally appropriate."""
 
-CURRENT BODY:
-{body.current_body}
 
-USER INSTRUCTIONS:
-{body.instructions}
-
-Return the modified plain-text body only:"""
-            }]
+@router.post("/template-ai-edit")
+async def ai_edit_template(body: AITemplateEditRequest, current_user: dict = Depends(get_current_user)):
+    """Use AI (Claude, via the shared ai_client) to edit a template's
+    plain-text body based on user instructions."""
+    try:
+        new_body = await call_claude(
+            _AI_TEMPLATE_EDIT_SYSTEM_PROMPT,
+            f"CURRENT BODY:\n{body.current_body}\n\nUSER INSTRUCTIONS:\n{body.instructions}\n\nReturn the modified plain-text body only:",
+            max_tokens=2048,
         )
-        new_body = message.content[0].text.strip()
         if new_body.startswith("```"):
             lines = new_body.split("\n")
             new_body = "\n".join(lines[1:-1] if lines[-1].startswith("```") else lines[1:])
@@ -4749,11 +4745,7 @@ async def send_campaign_for_approval(case_id: str, campaign_id: str, req: Campai
         requester_name = (requester["full_name"] if requester else None) or current_user.get("email", "Your colleague")
         requester_email = current_user.get("email", "")
 
-        campaign_type_label = (
-            "Request to Execute Required Document" if campaign["campaign_type"] == "document_execution_request"
-            else "PEO Authorization" if campaign["campaign_type"] == "peo_authorization"
-            else "Outstanding Amount"
-        )
+        campaign_type_label = _campaign_type_label(campaign["campaign_type"])
 
         token = secrets.token_urlsafe(32)
         expires_at = (datetime.now(timezone.utc) + timedelta(hours=APPROVAL_TOKEN_EXPIRY_HOURS)).isoformat()
@@ -4820,11 +4812,7 @@ async def get_campaign_for_approval(token: str):
             for n, e in sorted(by_step.items())
         ]
 
-        campaign_type_label = (
-            "Request to Execute Required Document" if campaign["campaign_type"] == "document_execution_request"
-            else "PEO Authorization" if campaign["campaign_type"] == "peo_authorization"
-            else "Outstanding Amount"
-        )
+        campaign_type_label = _campaign_type_label(campaign["campaign_type"])
 
         return {
             "campaign_id": campaign["id"],
@@ -4859,11 +4847,7 @@ async def approve_campaign_by_token(token: str):
         db.execute("UPDATE campaign_emails SET status = 'scheduled' WHERE campaign_id = ? AND step_number > 1", (campaign["id"],))
 
         case_row = db.execute("SELECT title FROM cases WHERE id = ?", (campaign["case_id"],)).fetchone()
-        campaign_type_label = (
-            "Request to Execute Required Document" if campaign["campaign_type"] == "document_execution_request"
-            else "PEO Authorization" if campaign["campaign_type"] == "peo_authorization"
-            else "Outstanding Amount"
-        )
+        campaign_type_label = _campaign_type_label(campaign["campaign_type"])
         requester_email = campaign["approval_requested_by_email"]
     if requester_email:
         send_campaign_approved_notify_email(
@@ -4895,11 +4879,7 @@ async def reject_campaign_by_token(token: str, req: CampaignApprovalRejection):
         db.execute("UPDATE campaign_emails SET status = 'cancelled' WHERE campaign_id = ?", (campaign["id"],))
 
         case_row = db.execute("SELECT title FROM cases WHERE id = ?", (campaign["case_id"],)).fetchone()
-        campaign_type_label = (
-            "Request to Execute Required Document" if campaign["campaign_type"] == "document_execution_request"
-            else "PEO Authorization" if campaign["campaign_type"] == "peo_authorization"
-            else "Outstanding Amount"
-        )
+        campaign_type_label = _campaign_type_label(campaign["campaign_type"])
         requester_email = campaign["approval_requested_by_email"]
     if requester_email:
         send_campaign_rejected_notify_email(
