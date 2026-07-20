@@ -325,6 +325,15 @@ async def get_signature_request(sign_token: str, request: Request):
                 if f["key"] in submitted_values:
                     f["value"] = submitted_values[f["key"]]
 
+        # For a real fillable form, tell the frontend exactly where each
+        # field (and the signature box, if the PDF has one) sits on the
+        # page — lets it overlay real inputs directly on top of a rendered
+        # image of the actual document, instead of a disconnected list of
+        # inputs above it.
+        page_layout = None
+        if form_fields_schema:
+            page_layout = _get_form_field_layout(doc, form_fields_schema)
+
         return {
             "request_id": req["id"],
             "document_id": req["document_id"],
@@ -336,7 +345,87 @@ async def get_signature_request(sign_token: str, request: Request):
             "status": req["status"],
             "created_at": req["created_at"],
             "form_fields_schema": form_fields_schema,
+            "page_layout": page_layout,
         }
+
+
+def _get_form_field_layout(doc: dict, form_fields_schema: list) -> dict | None:
+    """Opens the PDF once to find each schema field's real widget rect +
+    page number (matched by field_names, same lookup _embed_form_field_values
+    uses at submit time), plus the "signature" widget's rect if present, and
+    each involved page's size in PDF points — everything the frontend needs
+    to position overlay inputs on top of a rendered image of the actual page."""
+    try:
+        import fitz  # PyMuPDF
+    except ImportError:
+        return None
+
+    full_path = os.path.join(UPLOAD_BASE_DIR, doc["file_path"] or "")
+    if not os.path.exists(full_path):
+        return None
+
+    try:
+        pdf = fitz.open(full_path)
+        fields, pages = {}, {}
+        wanted = set()
+        for f in form_fields_schema:
+            wanted.update(f.get("field_names", []))
+        wanted.add("signature")
+
+        for page_idx, page in enumerate(pdf):
+            for widget in (page.widgets() or []):
+                if widget.field_name in wanted:
+                    page_num = page_idx + 1
+                    r = widget.rect
+                    fields[widget.field_name] = {"page": page_num, "rect": [r.x0, r.y0, r.x1, r.y1]}
+                    if page_num not in pages:
+                        pages[page_num] = {"width": page.rect.width, "height": page.rect.height}
+        pdf.close()
+        if not fields:
+            return None
+        return {"fields": fields, "pages": pages}
+    except Exception as e:
+        print(f"[SIGNATURES] Failed to read form field layout: {e}")
+        return None
+
+
+@router.get("/sign/{sign_token}/page-image")
+async def get_sign_page_image(sign_token: str, page: int = 1):
+    """Render one page of the document as a PNG (public, no login) — the
+    background image the signer's browser overlays real input fields on
+    top of, so filling the form looks and behaves like filling the actual
+    document instead of a disconnected list of fields."""
+    try:
+        import fitz  # PyMuPDF
+    except ImportError:
+        raise HTTPException(status_code=500, detail="PDF processing library not available")
+
+    with get_db() as db:
+        req = db.execute("SELECT * FROM signature_requests WHERE sign_token = ?", (sign_token,)).fetchone()
+        if not req:
+            raise HTTPException(status_code=404, detail="Invalid signing link")
+        doc = db.execute("SELECT * FROM documents WHERE id = ?", (req["document_id"],)).fetchone()
+        if not doc or not doc["file_path"]:
+            raise HTTPException(status_code=404, detail="Document not found")
+
+    full_path = os.path.join(UPLOAD_BASE_DIR, doc["file_path"])
+    if not os.path.exists(full_path):
+        raise HTTPException(status_code=404, detail="File not found on server")
+
+    try:
+        pdf = fitz.open(full_path)
+        if page < 1 or page > len(pdf):
+            pdf.close()
+            raise HTTPException(status_code=400, detail=f"Page {page} out of range (1-{len(pdf)})")
+        pdf_page = pdf[page - 1]
+        pix = pdf_page.get_pixmap(matrix=fitz.Matrix(2.0, 2.0))
+        img_bytes = pix.tobytes("png")
+        pdf.close()
+        return StreamingResponse(io.BytesIO(img_bytes), media_type="image/png")
+    except HTTPException:
+        raise
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=f"Failed to render page: {str(e)}")
 
 
 @router.get("/sign/{sign_token}/file")

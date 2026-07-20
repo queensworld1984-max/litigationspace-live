@@ -13,6 +13,12 @@ interface FormField {
   key: string
   label: string
   value?: string
+  field_names?: string[]
+}
+
+interface PageLayout {
+  fields: Record<string, { page: number; rect: [number, number, number, number] }>
+  pages: Record<string, { width: number; height: number }>
 }
 
 interface SignRequest {
@@ -26,6 +32,7 @@ interface SignRequest {
   status: string
   created_at: string
   form_fields_schema?: FormField[] | null
+  page_layout?: PageLayout | null
 }
 
 // ── SignaturePad: one canvas per required page ─────────────────────────────────
@@ -165,6 +172,8 @@ export default function DocumentSign() {
   const [submitting, setSubmitting] = useState(false)
   const [submitErr,  setSubmitErr]  = useState('')
   const [done,       setDone]       = useState(false)
+  const [imgSize, setImgSize] = useState<Record<number, { width: number; height: number }>>({})
+  const imgRefs = useRef<Record<number, HTMLImageElement | null>>({})
 
   useEffect(() => {
     if (!token) return
@@ -190,9 +199,55 @@ export default function DocumentSign() {
     setSignatures(prev => ({ ...prev, [pageNum]: dataUrl }))
   }
 
+  // Keep overlay positions correct if the window is resized/rotated after
+  // the page images first load, not just at initial load.
+  useEffect(() => {
+    const remeasure = () => {
+      setImgSize(prev => {
+        const next = { ...prev }
+        for (const [pageStr, el] of Object.entries(imgRefs.current)) {
+          if (el) next[Number(pageStr)] = { width: el.clientWidth, height: el.clientHeight }
+        }
+        return next
+      })
+    }
+    window.addEventListener('resize', remeasure)
+    return () => window.removeEventListener('resize', remeasure)
+  }, [])
+
   const formFields = req?.form_fields_schema || []
   const formComplete = formFields.every(f => (formValues[f.key] || '').trim())
   const allConfirmed = req ? req.signature_pages.every(p => signatures[p]) && formComplete : false
+
+  const pageLayout = req?.page_layout || null
+
+  // One overlay input per (field, matched widget) — a field can map to more
+  // than one widget on the real form (e.g. the company name appears both
+  // inline in the recital and again in the signature block), so typing in
+  // either visible box updates the same underlying value and both show it.
+  const placements: { key: string; label: string; page: number; rect: [number, number, number, number] }[] = []
+  if (pageLayout) {
+    for (const f of formFields) {
+      for (const fieldName of f.field_names || []) {
+        const loc = pageLayout.fields[fieldName]
+        if (loc) placements.push({ key: f.key, label: f.label, page: loc.page, rect: loc.rect })
+      }
+    }
+  }
+  const layoutPages = pageLayout ? Object.keys(pageLayout.pages).map(Number).sort((a, b) => a - b) : []
+
+  function overlayStyle(rect: [number, number, number, number], pageNum: number): React.CSSProperties {
+    const pdfPage = pageLayout?.pages[String(pageNum)]
+    const rendered = imgSize[pageNum]
+    if (!pdfPage || !rendered) return { display: 'none' }
+    const scaleX = rendered.width / pdfPage.width
+    const scaleY = rendered.height / pdfPage.height
+    const [x0, y0, x1, y1] = rect
+    return {
+      position: 'absolute', left: x0 * scaleX, top: y0 * scaleY,
+      width: (x1 - x0) * scaleX, height: (y1 - y0) * scaleY,
+    }
+  }
 
   const submit = async () => {
     if (!formComplete) { setSubmitErr('Please fill in every field before submitting.'); return }
@@ -299,8 +354,48 @@ export default function DocumentSign() {
           </p>
         </div>
 
-        {/* Form fields — must be completed before the form can be submitted */}
-        {formFields.length > 0 && (
+        {/* Fill the actual document — the real form rendered as an image,
+            with real inputs positioned exactly on top of its own fields */}
+        {formFields.length > 0 && pageLayout && (
+          <div style={{ background: '#fff', border: '1px solid #e2e8f0', borderRadius: 14, padding: '20px 22px', boxShadow: '0 1px 8px rgba(0,0,0,0.05)', marginBottom: 16 }}>
+            <div style={{ fontSize: 13, fontWeight: 800, color: '#1a2340', marginBottom: 4 }}>📝 Complete the form below</div>
+            <div style={{ fontSize: 12, color: '#64748b', marginBottom: 14 }}>Click directly into the highlighted boxes on the document to fill it in.</div>
+            {layoutPages.map(pageNum => (
+              <div key={pageNum} style={{ position: 'relative', display: 'inline-block', width: '100%', marginBottom: 12, border: '1px solid #e2e8f0', borderRadius: 8, overflow: 'hidden' }}>
+                <img
+                  ref={el => { imgRefs.current[pageNum] = el }}
+                  src={`/api/signatures/sign/${token}/page-image?page=${pageNum}`}
+                  alt={`Page ${pageNum}`}
+                  style={{ width: '100%', display: 'block' }}
+                  onLoad={e => {
+                    const el = e.currentTarget
+                    setImgSize(p => ({ ...p, [pageNum]: { width: el.clientWidth, height: el.clientHeight } }))
+                  }}
+                />
+                {placements.filter(pl => pl.page === pageNum).map((pl, i) => (
+                  <input
+                    key={`${pl.key}-${i}`}
+                    value={formValues[pl.key] ?? ''}
+                    onChange={e => setFormValues(p => ({ ...p, [pl.key]: e.target.value }))}
+                    placeholder={pl.label}
+                    title={pl.label}
+                    style={{
+                      ...overlayStyle(pl.rect, pageNum),
+                      boxSizing: 'border-box', padding: '2px 6px', fontSize: 13,
+                      border: '1.5px solid #2563eb', borderRadius: 3, outline: 'none',
+                      fontFamily: 'inherit', color: '#111827', background: 'rgba(255,255,255,0.92)',
+                    }}
+                  />
+                ))}
+              </div>
+            ))}
+          </div>
+        )}
+
+        {/* Fallback list view — only used if the document's field layout
+            couldn't be read (e.g. not a real fillable PDF); the schema
+            still requires these values, just without the overlay. */}
+        {formFields.length > 0 && !pageLayout && (
           <div style={{ background: '#fff', border: '1px solid #e2e8f0', borderRadius: 14, padding: '20px 22px', boxShadow: '0 1px 8px rgba(0,0,0,0.05)', marginBottom: 16 }}>
             <div style={{ fontSize: 13, fontWeight: 800, color: '#1a2340', marginBottom: 14 }}>📝 Complete the form</div>
             {formFields.map(f => (
@@ -319,6 +414,11 @@ export default function DocumentSign() {
 
         {/* Signature pads */}
         <div style={{ background: '#fff', border: '1px solid #e2e8f0', borderRadius: 14, padding: '20px 22px', boxShadow: '0 1px 8px rgba(0,0,0,0.05)', marginBottom: 16 }}>
+          {pageLayout?.fields.signature && (
+            <p style={{ margin: '0 0 14px', fontSize: 12, color: '#64748b' }}>
+              Your signature below will be placed in the <strong>Signature</strong> box on the document above.
+            </p>
+          )}
           {req.signature_pages.map(pageNum => (
             <SignaturePad
               key={pageNum}
