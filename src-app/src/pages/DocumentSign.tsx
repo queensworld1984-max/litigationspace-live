@@ -174,6 +174,7 @@ export default function DocumentSign() {
   const [done,       setDone]       = useState(false)
   const [imgSize, setImgSize] = useState<Record<number, { width: number; height: number }>>({})
   const imgRefs = useRef<Record<number, HTMLImageElement | null>>({})
+  const [signModalPage, setSignModalPage] = useState<number | null>(null)
 
   useEffect(() => {
     if (!token) return
@@ -220,6 +221,9 @@ export default function DocumentSign() {
   const allConfirmed = req ? req.signature_pages.every(p => signatures[p]) && formComplete : false
 
   const pageLayout = req?.page_layout || null
+  const remainingSignaturePages = req
+    ? req.signature_pages.filter(p => pageLayout?.fields.signature?.page !== p)
+    : []
 
   // One overlay input per (field, matched widget) — a field can map to more
   // than one widget on the real form (e.g. the company name appears both
@@ -387,6 +391,26 @@ export default function DocumentSign() {
                     }}
                   />
                 ))}
+                {/* The one signature spot on the form — click it to sign;
+                    no separate drawing area elsewhere on the page. */}
+                {pageLayout?.fields.signature?.page === pageNum && (
+                  <button
+                    type="button"
+                    onClick={() => setSignModalPage(pageNum)}
+                    style={{
+                      ...overlayStyle(pageLayout.fields.signature.rect, pageNum),
+                      boxSizing: 'border-box', border: signatures[pageNum] ? '1.5px solid #16a34a' : '1.5px dashed #2563eb',
+                      borderRadius: 3, background: signatures[pageNum] ? 'rgba(240,253,244,0.95)' : 'rgba(239,246,255,0.95)',
+                      cursor: 'pointer', padding: 0, display: 'flex', alignItems: 'center', justifyContent: 'center',
+                      overflow: 'hidden',
+                    }}
+                    title={signatures[pageNum] ? 'Click to redo your signature' : 'Click to sign'}
+                  >
+                    {signatures[pageNum]
+                      ? <img src={signatures[pageNum]} alt="Your signature" style={{ height: '100%', objectFit: 'contain' }} />
+                      : <span style={{ fontSize: 12, fontWeight: 700, color: '#2563eb' }}>✍ Click to Sign</span>}
+                  </button>
+                )}
               </div>
             ))}
           </div>
@@ -412,22 +436,25 @@ export default function DocumentSign() {
           </div>
         )}
 
-        {/* Signature pads */}
-        <div style={{ background: '#fff', border: '1px solid #e2e8f0', borderRadius: 14, padding: '20px 22px', boxShadow: '0 1px 8px rgba(0,0,0,0.05)', marginBottom: 16 }}>
-          {pageLayout?.fields.signature && (
-            <p style={{ margin: '0 0 14px', fontSize: 12, color: '#64748b' }}>
-              Your signature below will be placed in the <strong>Signature</strong> box on the document above.
-            </p>
-          )}
-          {req.signature_pages.map(pageNum => (
-            <SignaturePad
-              key={pageNum}
-              pageNum={pageNum}
-              signed={!!signatures[pageNum]}
-              onSigned={handlePageSigned}
-            />
-          ))}
+        {/* Signature pads — only for pages where the document itself doesn't
+            have a real Signature box to click (e.g. not a fillable form).
+            When it does, that's the one and only place to sign — see the
+            "✍ Click to Sign" box on the document above. */}
+        {remainingSignaturePages.length > 0 && (
+          <div style={{ background: '#fff', border: '1px solid #e2e8f0', borderRadius: 14, padding: '20px 22px', boxShadow: '0 1px 8px rgba(0,0,0,0.05)', marginBottom: 16 }}>
+            {remainingSignaturePages.map(pageNum => (
+              <SignaturePad
+                key={pageNum}
+                pageNum={pageNum}
+                signed={!!signatures[pageNum]}
+                onSigned={handlePageSigned}
+              />
+            ))}
+          </div>
+        )}
 
+        {/* Progress + submit */}
+        <div style={{ background: '#fff', border: '1px solid #e2e8f0', borderRadius: 14, padding: '20px 22px', boxShadow: '0 1px 8px rgba(0,0,0,0.05)', marginBottom: 16 }}>
           {/* Progress */}
           <div style={{
             marginBottom: 14, padding: '8px 14px',
@@ -464,6 +491,32 @@ export default function DocumentSign() {
           Powered by LitigationSpace · Secure E-Signature Platform
         </p>
       </div>
+
+      {/* Sign modal — a properly sized drawing area, opened from the one
+          "✍ Click to Sign" spot on the document, instead of a cramped
+          in-line box the size of the form's thin Signature field. */}
+      {signModalPage !== null && (
+        <div style={{ position: 'fixed', inset: 0, background: 'rgba(15,23,42,0.6)', display: 'flex', alignItems: 'center', justifyContent: 'center', zIndex: 1000, padding: 20 }}
+          onClick={() => setSignModalPage(null)}>
+          <div style={{ background: '#fff', borderRadius: 16, padding: '24px 26px', maxWidth: 620, width: '100%', boxShadow: '0 20px 60px rgba(0,0,0,0.35)' }}
+            onClick={e => e.stopPropagation()}>
+            <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', marginBottom: 6 }}>
+              <h3 style={{ margin: 0, fontSize: 16, fontWeight: 800, color: '#1a2340' }}>Sign here</h3>
+              <button onClick={() => setSignModalPage(null)} style={{ background: 'none', border: 'none', fontSize: 20, lineHeight: 1, color: '#94a3b8', cursor: 'pointer', padding: 4 }}>✕</button>
+            </div>
+            <p style={{ margin: '0 0 14px', fontSize: 12.5, color: '#64748b' }}>Draw your signature, confirm it, then close this window.</p>
+            <SignaturePad
+              pageNum={signModalPage}
+              signed={!!signatures[signModalPage]}
+              onSigned={handlePageSigned}
+            />
+            <button onClick={() => setSignModalPage(null)}
+              style={{ width: '100%', marginTop: 4, padding: '11px', borderRadius: 10, border: 'none', background: signatures[signModalPage] ? 'linear-gradient(135deg,#22c55e,#16a34a)' : '#e2e8f0', color: signatures[signModalPage] ? '#fff' : '#94a3b8', fontSize: 14, fontWeight: 700, cursor: 'pointer' }}>
+              {signatures[signModalPage] ? '✓ Done' : 'Draw your signature above first'}
+            </button>
+          </div>
+        </div>
+      )}
     </div>
   )
 }
