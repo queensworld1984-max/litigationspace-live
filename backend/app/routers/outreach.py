@@ -4238,9 +4238,14 @@ def _ensure_default_proceeding_types(db, tenant_id: str):
     """Lazily seed the 8 preset proceeding types the first time a tenant
     touches this feature. Seeded per-tenant — not one shared global row —
     so every tenant's copy is independently editable/deletable without
-    affecting any other tenant's presets."""
+    affecting any other tenant's presets.
+
+    Guarded on preset rows specifically (not "any row exists") — a tenant
+    like ERTC Funding, migrated in with 2 custom types already present
+    before ever hitting this endpoint, must still get the 8 presets rather
+    than being silently skipped forever because a row already existed."""
     existing = db.execute(
-        "SELECT COUNT(*) as n FROM outreach_proceeding_types WHERE tenant_id = ?",
+        "SELECT COUNT(*) as n FROM outreach_proceeding_types WHERE tenant_id = ? AND is_preset = 1",
         (tenant_id,)
     ).fetchone()["n"]
     if existing > 0:
@@ -4278,7 +4283,7 @@ async def list_proceeding_types(current_user: dict = Depends(get_current_user)):
             "SELECT * FROM outreach_proceeding_types WHERE tenant_id = ? AND is_active = 1 ORDER BY sort_order, label",
             (tenant_id,)
         ).fetchall()
-        return {"proceeding_types": [dict(r) for r in rows]}
+        return {"data": [dict(r) for r in rows]}
 
 
 @router.post("/proceeding-types")
