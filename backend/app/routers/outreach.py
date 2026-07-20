@@ -1858,6 +1858,44 @@ def _substitute_tokens(text: str, tokens: dict) -> str:
     return text
 
 
+# Prose categories, in narrative order, that make up an assembled letter
+# body. signature_block/cta_config are deliberately excluded here — the
+# letter shell (_render_plaintext_template) already provides its own
+# closing/signature, and CTA/document-sign links are handled by the
+# existing document_links machinery, not simple prose text.
+_CLAUSE_BODY_CATEGORIES = [
+    "factual_background", "contractual_obligations", "requested_action",
+    "cure_period", "consequences", "remedies_sought", "reservation_of_rights",
+]
+
+
+def _assemble_clause_body(db, tenant_id: str, tokens: dict) -> Optional[str]:
+    """Assemble a plaintext template body from the tenant's own saved clause
+    library instead of the hardcoded DEFAULT_PLAINTEXT_TEMPLATES wording —
+    the actual replacement for "the AI/tenant fills in a fixed Python
+    template" described in the tenant-owned-outreach requirements.
+
+    Uses whichever clause is flagged is_default_for_category per category;
+    categories with no saved clause are simply skipped (not a blank
+    paragraph). Returns None if the tenant hasn't saved any default clauses
+    yet, so the caller can fall back to the built-in generic wording rather
+    than sending an empty letter."""
+    rows = db.execute(
+        "SELECT category, body FROM outreach_clauses WHERE tenant_id = ? AND is_default_for_category = 1",
+        (tenant_id,)
+    ).fetchall()
+    if not rows:
+        return None
+    by_category = {r["category"]: r["body"] for r in rows if (r["body"] or "").strip()}
+    if not by_category:
+        return None
+    paragraphs = [
+        _substitute_tokens(by_category[cat], tokens)
+        for cat in _CLAUSE_BODY_CATEGORIES if cat in by_category
+    ]
+    return "\n\n".join(paragraphs)
+
+
 def _amount_box(label: str, amount_str: str) -> str:
     return f"""<div style="background: #fef3c7; border: 2px solid #f59e0b; border-radius: 8px; padding: 20px; margin: 24px 0; text-align: center;">
         <p style="color: #92400e; font-size: 12px; text-transform: uppercase; letter-spacing: 1px; margin: 0 0 8px 0; font-weight: 600;">{label}</p>
@@ -1945,13 +1983,20 @@ def _render_plaintext_template(
     firm_name: str, client_name: str = "", recipient_address: str = "",
     case_title: str = "", case_number: str = "", logo_url: str = "",
     document_links: list = None, custom_subject: str = None, custom_body: str = None,
+    tenant_id: str = "",
 ) -> tuple:
-    """Render a template from its saved plain-text override (or the default
-    plain-text version if none saved) — the single render path used by
-    preview, bulk send, and campaigns for any of the 9 editable templates."""
+    """Render a template from its saved plain-text override (or the tenant's
+    own clause library, or the built-in default plain-text version if
+    neither exists) — the single render path used by preview, bulk send,
+    and campaigns for any of the 9 editable templates."""
     default = DEFAULT_PLAINTEXT_TEMPLATES.get(template_type, {"subject": "", "body": ""})
     subject_tpl = custom_subject if custom_subject is not None else default["subject"]
-    body_tpl = custom_body if custom_body is not None else default["body"]
+    body_tpl = custom_body
+    if body_tpl is None and tenant_id:
+        with get_db() as db:
+            body_tpl = _assemble_clause_body(db, tenant_id, tokens)
+    if body_tpl is None:
+        body_tpl = default["body"]
 
     subject = _substitute_tokens(subject_tpl, tokens)
     today = datetime.now(timezone.utc).strftime("%B %d, %Y")
@@ -2520,6 +2565,7 @@ async def bulk_send_template(case_id: str, req: BulkEmailRequest, current_user: 
                         client_name=client_name, recipient_address=recipient_address, case_title=case_title,
                         case_number=case_number, logo_url=logo_url, document_links=document_links,
                         custom_subject=custom_subject_tpl, custom_body=custom_body_tpl,
+                        tenant_id=tenant_id,
                     )
             elif req.template_type in _PLAINTEXT_TEMPLATE_TYPES:
                 tokens = _build_plaintext_tokens(
@@ -2533,6 +2579,7 @@ async def bulk_send_template(case_id: str, req: BulkEmailRequest, current_user: 
                     client_name=client_name, recipient_address=recipient_address, case_title=case_title,
                     case_number=case_number, logo_url=logo_url,
                     custom_subject=custom_subject_tpl, custom_body=custom_body_tpl,
+                    tenant_id=tenant_id,
                 )
             elif req.template_type == "general_letter":
                 subject, html = _template_general_letter(
@@ -3428,6 +3475,7 @@ async def preview_template(req: BulkEmailRequest, current_user: dict = Depends(g
             logo_url=logo_url, document_links=document_links,
             custom_subject=(custom_row["custom_subject"] if custom_row else None),
             custom_body=(custom_row["custom_body"] if custom_row else None),
+            tenant_id=tenant_id,
         )
     elif req.template_type in _PLAINTEXT_TEMPLATE_TYPES:
         tokens = _build_plaintext_tokens(
@@ -3441,6 +3489,7 @@ async def preview_template(req: BulkEmailRequest, current_user: dict = Depends(g
             logo_url=logo_url,
             custom_subject=(custom_row["custom_subject"] if custom_row else None),
             custom_body=(custom_row["custom_body"] if custom_row else None),
+            tenant_id=tenant_id,
         )
     elif req.template_type == "general_letter":
         subject, html = _template_general_letter(
@@ -4375,6 +4424,124 @@ async def delete_proceeding_type(type_id: str, current_user: dict = Depends(get_
 
 
 # ---------------------------------------------------------------------------
+# CLAUSE LIBRARY — tenant-owned reusable letter building blocks
+# (Milestone 2: replaces hardcoded Python template wording for the
+# plain-text fallback path — never touches a tenant's custom_html override)
+# ---------------------------------------------------------------------------
+
+_CLAUSE_CATEGORIES = _CLAUSE_BODY_CATEGORIES + ["signature_block", "cta_config"]
+
+
+class ClauseCreate(BaseModel):
+    category: str
+    name: str
+    body: str = ""
+    is_default_for_category: bool = False
+    proceeding_type_id: Optional[str] = None
+
+
+class ClauseUpdate(BaseModel):
+    name: Optional[str] = None
+    body: Optional[str] = None
+    is_default_for_category: Optional[bool] = None
+    proceeding_type_id: Optional[str] = None
+
+
+@router.get("/clauses")
+async def list_clauses(current_user: dict = Depends(get_current_user)):
+    """List this tenant's saved clauses, grouped by category."""
+    tenant_id = current_user["tenant_id"]
+    with get_db() as db:
+        rows = db.execute(
+            "SELECT * FROM outreach_clauses WHERE tenant_id = ? ORDER BY category, created_at DESC",
+            (tenant_id,)
+        ).fetchall()
+        return {"data": [dict(r) for r in rows]}
+
+
+@router.post("/clauses")
+async def create_clause(req: ClauseCreate, current_user: dict = Depends(get_current_user)):
+    """Save a new reusable clause. Setting is_default_for_category unsets
+    any other clause currently flagged default in the same category — only
+    one clause per category is ever "live" for letter assembly at a time."""
+    tenant_id = current_user["tenant_id"]
+    if req.category not in _CLAUSE_CATEGORIES:
+        raise HTTPException(status_code=400, detail=f"category must be one of: {', '.join(_CLAUSE_CATEGORIES)}")
+    if not req.name.strip():
+        raise HTTPException(status_code=400, detail="name is required")
+    with get_db() as db:
+        new_id = generate_id()
+        if req.is_default_for_category:
+            db.execute(
+                "UPDATE outreach_clauses SET is_default_for_category = 0 WHERE tenant_id = ? AND category = ?",
+                (tenant_id, req.category)
+            )
+        db.execute(
+            "INSERT INTO outreach_clauses "
+            "(id, tenant_id, category, name, body, is_default_for_category, proceeding_type_id, created_by) "
+            "VALUES (?, ?, ?, ?, ?, ?, ?, ?)",
+            (new_id, tenant_id, req.category, req.name.strip(), req.body,
+             1 if req.is_default_for_category else 0, req.proceeding_type_id, current_user["sub"])
+        )
+        db.commit()
+        row = db.execute("SELECT * FROM outreach_clauses WHERE id = ?", (new_id,)).fetchone()
+        return dict(row)
+
+
+@router.patch("/clauses/{clause_id}")
+async def update_clause(clause_id: str, req: ClauseUpdate, current_user: dict = Depends(get_current_user)):
+    tenant_id = current_user["tenant_id"]
+    with get_db() as db:
+        row = db.execute(
+            "SELECT * FROM outreach_clauses WHERE id = ? AND tenant_id = ?",
+            (clause_id, tenant_id)
+        ).fetchone()
+        if not row:
+            raise HTTPException(status_code=404, detail="Clause not found")
+        if req.is_default_for_category:
+            db.execute(
+                "UPDATE outreach_clauses SET is_default_for_category = 0 WHERE tenant_id = ? AND category = ? AND id != ?",
+                (tenant_id, row["category"], clause_id)
+            )
+        updates = {}
+        if req.name is not None:
+            stripped = req.name.strip()
+            if not stripped:
+                raise HTTPException(status_code=400, detail="name cannot be blank")
+            updates["name"] = stripped
+        if req.body is not None:
+            updates["body"] = req.body
+        if req.is_default_for_category is not None:
+            updates["is_default_for_category"] = 1 if req.is_default_for_category else 0
+        if req.proceeding_type_id is not None:
+            updates["proceeding_type_id"] = req.proceeding_type_id
+        if updates:
+            set_clause = ", ".join(f"{k} = ?" for k in updates)
+            db.execute(
+                f"UPDATE outreach_clauses SET {set_clause}, updated_at = CURRENT_TIMESTAMP WHERE id = ?",
+                (*updates.values(), clause_id)
+            )
+            db.commit()
+        row = db.execute("SELECT * FROM outreach_clauses WHERE id = ?", (clause_id,)).fetchone()
+        return dict(row)
+
+
+@router.delete("/clauses/{clause_id}")
+async def delete_clause(clause_id: str, current_user: dict = Depends(get_current_user)):
+    tenant_id = current_user["tenant_id"]
+    with get_db() as db:
+        row = db.execute(
+            "SELECT id FROM outreach_clauses WHERE id = ? AND tenant_id = ?",
+            (clause_id, tenant_id)
+        ).fetchone()
+        if not row:
+            raise HTTPException(status_code=404, detail="Clause not found")
+        db.execute("DELETE FROM outreach_clauses WHERE id = ?", (clause_id,))
+        db.commit()
+    return {"ok": True}
+
+
+# ---------------------------------------------------------------------------
 # EMAIL CAMPAIGNS — Staged sequences with supervisor approval
 # ---------------------------------------------------------------------------
 
@@ -4662,6 +4829,7 @@ async def create_campaign(case_id: str, req: CampaignCreate, current_user: dict 
                                 client_name=client_name, recipient_address=recipient_address, case_title=case_title,
                                 case_number=case_number, logo_url=logo_url, document_links=document_links,
                                 custom_subject=stage1_custom_subject, custom_body=stage1_custom_body,
+                                tenant_id=tenant_id,
                             )
                     elif tpl_type in _FOLLOWUP_STAGE_TYPES.get(campaign_type, ()):
                         _stage_deadlines = {"document_execution_followup": 7, "document_execution_escalation": 5,
@@ -4715,6 +4883,7 @@ async def create_campaign(case_id: str, req: CampaignCreate, current_user: dict 
                         client_name=client_name, recipient_address=recipient_address, case_title=case_title,
                         case_number=case_number, logo_url=logo_url,
                         custom_subject=stage1_custom_subject, custom_body=stage1_custom_body,
+                        tenant_id=tenant_id,
                     )
                 elif tpl_type == "follow_up":
                     subject, html = tpl_func(

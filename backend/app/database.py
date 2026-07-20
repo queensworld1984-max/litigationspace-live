@@ -925,6 +925,10 @@ def init_db():
         _migrate_case_campaigns_proceeding_type_column(db)
         _migrate_seed_ertc_proceeding_types(db)
 
+        # Tenant-owned clause library (Milestone 2) — reusable letter
+        # building blocks backing the plain-text template fallback path
+        _create_outreach_clauses_table(db)
+
         # Per-case external collaborators (Case Team & Access invite panel)
         _create_case_collaborators_table(db)
 
@@ -1831,6 +1835,50 @@ def _migrate_seed_ertc_proceeding_types(db):
             )
     except Exception as e:
         print(f"[MIGRATION WARNING] ERTC proceeding type seed: {e}")
+
+
+def _create_outreach_clauses_table(db):
+    """Tenant-owned reusable letter building blocks (Milestone 2) — replaces
+    the hardcoded Python _template_* fallback wording. A tenant assembles
+    their own letters from saved snippets in 9 categories instead of
+    editing shared code. `is_default_for_category` marks the one clause per
+    category actually used when assembling a plaintext template body (see
+    _assemble_clause_body in outreach.py) — a tenant can save several
+    variations per category but only one is "live" at a time per category.
+
+    Deliberately does NOT touch any tenant's existing custom_html override
+    (email_template_custom.custom_html) — that's a separate, higher-priority
+    render path (used by ERTC Funding's document-execution/PEO letters) and
+    is completely unaffected by this table; the clause library only backs
+    the plain-text fallback path for tenants who haven't hand-crafted HTML."""
+    db.executescript("""
+        CREATE TABLE IF NOT EXISTS outreach_clauses (
+            id TEXT PRIMARY KEY,
+            tenant_id TEXT NOT NULL,
+            category TEXT NOT NULL CHECK(category IN (
+                'factual_background', 'contractual_obligations', 'requested_action',
+                'cure_period', 'consequences', 'remedies_sought',
+                'reservation_of_rights', 'signature_block', 'cta_config'
+            )),
+            name TEXT NOT NULL,
+            body TEXT NOT NULL DEFAULT '',
+            is_default_for_category INTEGER DEFAULT 0,
+            proceeding_type_id TEXT,
+            created_by TEXT,
+            created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+            updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
+        );
+        CREATE INDEX IF NOT EXISTS idx_outreach_clauses_tenant_cat ON outreach_clauses(tenant_id, category);
+
+        CREATE TABLE IF NOT EXISTS outreach_custom_tokens (
+            id TEXT PRIMARY KEY,
+            tenant_id TEXT NOT NULL,
+            token_name TEXT NOT NULL,
+            default_value TEXT DEFAULT '',
+            created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+            UNIQUE(tenant_id, token_name)
+        );
+    """)
 
 
 def _fix_orphaned_campaign_emails_table(db):
