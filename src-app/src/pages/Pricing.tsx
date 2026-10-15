@@ -27,8 +27,8 @@ const PLANS: Plan[] = [
     name: 'Basic',
     desc: 'Full platform access for individuals, researchers, and lightweight legal workflows.',
     hasTrial: true,
-    monthly: 49,
-    annual: 39,
+    monthly: 19,
+    annual: 228,
     per: '/mo',
     cta: 'Start Free Trial',
     ctaStyle: 'outline',
@@ -40,8 +40,8 @@ const PLANS: Plan[] = [
     name: 'Elite',
     desc: 'Enhanced litigation intelligence capacity for active legal professionals and larger caseloads.',
     hasTrial: false,
-    monthly: 129,
-    annual: 103,
+    monthly: 49,
+    annual: 588,
     per: '/mo',
     cta: 'Upgrade to Elite',
     ctaStyle: 'gold',
@@ -53,8 +53,8 @@ const PLANS: Plan[] = [
     name: 'Chambers',
     desc: 'Collaborative litigation infrastructure for firms, partnerships, and active legal teams managing shared litigation workflows.',
     hasTrial: false,
-    monthly: 179,
-    annual: 143,
+    monthly: 99,
+    annual: 1188,
     per: '/user/mo',
     cta: 'Choose Chambers',
     ctaStyle: 'outline',
@@ -68,7 +68,7 @@ const PLANS: Plan[] = [
     hasTrial: false,
     monthly: null,
     annual: null,
-    priceLabel: 'From $349',
+    priceLabel: 'From $129',
     per: '/user/mo',
     cta: 'Talk to Sales',
     ctaStyle: 'outline',
@@ -222,10 +222,7 @@ export default function Pricing() {
               <button
                 onClick={() => setBilling('annual')}
                 style={{ background: billing === 'annual' ? 'linear-gradient(135deg,#D4A020,#C49010)' : 'none', border: 'none', cursor: 'pointer', fontFamily: 'Inter, sans-serif', fontSize: 13.5, fontWeight: billing === 'annual' ? 700 : 600, padding: '8px 26px', borderRadius: 9999, color: billing === 'annual' ? '#fff' : '#111', boxShadow: billing === 'annual' ? '0 3px 14px rgba(196,144,16,0.40)' : 'none', transition: 'all .2s' }}
-              >
-                Annual{' '}
-                <span style={{ display: 'inline-block', marginLeft: 6, background: 'rgba(190,148,35,0.12)', border: '1px solid rgba(190,148,35,0.30)', color: '#9a7010', fontSize: 10.5, fontWeight: 700, borderRadius: 9999, padding: '2px 9px', verticalAlign: 'middle', letterSpacing: '0.04em' }}>Save 20%</span>
-              </button>
+              >Annual</button>
             </div>
           </div>
         </div>
@@ -294,8 +291,8 @@ export default function Pricing() {
                       <span style={{ fontFamily: 'Inter, sans-serif', fontSize: 22, fontWeight: 600, verticalAlign: 'super' }}>$</span>
                       {price(plan)}
                     </div>
-                    <div style={{ fontSize: 13, color: '#111', marginTop: 6, letterSpacing: '0.02em' }}>{plan.per}</div>
-                    {billing === 'annual' && <div style={{ fontSize: 11.5, color: '#9a7010', marginTop: 5 }}>Billed annually · Save 20%</div>}
+                    <div style={{ fontSize: 13, color: '#111', marginTop: 6, letterSpacing: '0.02em' }}>{billing === 'annual' ? plan.per.replace('/mo', '/yr') : plan.per}</div>
+                    {billing === 'annual' && <div style={{ fontSize: 11.5, color: '#9a7010', marginTop: 5 }}>Billed annually</div>}
                   </>
                 )}
               </div>
