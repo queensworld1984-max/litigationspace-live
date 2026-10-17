@@ -36,10 +36,10 @@ function NavCol({ heading, links }: { heading: string; links: { to: string; labe
 export default function Footer() {
   return (
     <footer style={{ background: BG, color: T1 }}>
-      <div style={{ maxWidth: 1280, margin: '0 auto', padding: '64px 32px 0' }}>
+      <div className="ls-footer-inner" style={{ maxWidth: 1280, margin: '0 auto', padding: '64px 32px 0' }}>
 
         {/* ── Link grid ── */}
-        <div style={{ display: 'grid', gridTemplateColumns: '2fr 1fr 1fr 1fr 1fr', gap: 40, paddingBottom: 48, borderBottom: `1px solid ${BD}` }}>
+        <div className="ls-footer-grid" style={{ display: 'grid', gridTemplateColumns: '2fr 1fr 1fr 1fr 1fr', gap: 40, paddingBottom: 48, borderBottom: `1px solid ${BD}` }}>
 
           {/* Brand */}
           <div>

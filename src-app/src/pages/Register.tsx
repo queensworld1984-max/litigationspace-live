@@ -28,6 +28,8 @@ export default function Register() {
   const fromPath = locationState?.from
 
   function featureNameFromPath(path: string): string {
+    if (path.startsWith('/document-analyzer')) return 'Document Analyzer'
+    if (path.startsWith('/win-simulator')) return 'Win Simulator'
     if (path.startsWith('/cases')) return 'Case Vault'
     if (path.startsWith('/warroom') || path.startsWith('/war-room')) return 'War Room'
     if (path.startsWith('/drafting')) return 'Drafting Room'

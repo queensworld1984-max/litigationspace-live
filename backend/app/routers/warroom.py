@@ -6,7 +6,7 @@ import hashlib
 import httpx
 from datetime import datetime, timezone
 from typing import Optional, List
-from fastapi import APIRouter, HTTPException, Depends
+from fastapi import APIRouter, HTTPException, Depends, Request
 from pydantic import BaseModel
 
 from app.database import get_db
@@ -1096,12 +1096,34 @@ class RoleLabelRequest(BaseModel):
     motion_type: Optional[str] = None
 
 
+GUEST_SIMULATIONS_PER_DAY = 3
+
+
+def _guest_simulation_allowed(request: Request) -> bool:
+    """Guests (no login) get a few free simulations per day per IP; logged-in users use credits."""
+    ip = request.headers.get("x-real-ip") or (request.client.host if request.client else "unknown")
+    day = datetime.now(timezone.utc).strftime("%Y-%m-%d")
+    with get_db() as db:
+        db.execute("CREATE TABLE IF NOT EXISTS guest_simulations (ip TEXT, day TEXT, count INTEGER, PRIMARY KEY (ip, day))")
+        row = db.execute("SELECT count FROM guest_simulations WHERE ip=? AND day=?", (ip, day)).fetchone()
+        used = row[0] if row else 0
+        if used >= GUEST_SIMULATIONS_PER_DAY:
+            return False
+        db.execute("INSERT INTO guest_simulations (ip, day, count) VALUES (?, ?, 1) "
+                   "ON CONFLICT(ip, day) DO UPDATE SET count = count + 1", (ip, day))
+        db.commit()
+    return True
+
+
 @router.post("/simulate")
-async def simulate_hearing(req: SimulateRequest, user: Optional[dict] = Depends(_get_optional_user)):
+async def simulate_hearing(req: SimulateRequest, request: Request, user: Optional[dict] = Depends(_get_optional_user)):
     """
     Full virtual courtroom simulation. Returns transcript, bench questions, rulings,
     leanings, verdict, and jury data. AI is strictly record-grounded — no hallucination.
     """
+    if not user and not _guest_simulation_allowed(request):
+        raise HTTPException(status_code=429, detail="You have used today's free simulations. Create a free account to run more.")
+
     # Resolve legacy field aliases
     left_label = req.left_label or "Plaintiff"
     right_label = req.right_label or "Defendant"
@@ -1275,6 +1297,8 @@ Jury: {"Array of 12 juror objects: {id, seat, name, background, leaning(-100 to 
             "verdict": verdict,
             "verdict_text": verdict_text,
             "jury": jury_data,
+            # rule-based estimate used when the AI engine is unavailable; the UI must label it as such
+            "engine": "fallback",
         }
 
 

@@ -531,6 +531,8 @@ export default function DocumentAnalyzer() {
   async function handleAnalyze() {
     if (!hasInput) { setError('Please upload a file or paste document text.'); return }
     if (analysisLocked) { setError('This analysis type requires a Premium account.'); return }
+    // Document analysis is account-only (credit-gated); send guests to sign-up instead of a 401 bounce to /login
+    if (!isAuthenticated) { navigate('/register', { state: { from: '/document-analyzer' } }); return }
 
     setError('')
     setResult(null)
@@ -621,7 +623,7 @@ export default function DocumentAnalyzer() {
   // ─── Input Panel ──────────────────────────────────────────────────────────────
 
   const inputPanel = (
-    <div style={{ display: 'grid', gridTemplateColumns: 'minmax(0,1.1fr) minmax(0,0.9fr)', gap: 20, marginBottom: 28 }}>
+    <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(min(100%, 360px), 1fr))', gap: 20, marginBottom: 28 }}>
 
       {/* LEFT — File upload + text paste + doc type */}
       <div style={{ display: 'flex', flexDirection: 'column', gap: 16 }}>
@@ -771,7 +773,7 @@ export default function DocumentAnalyzer() {
                 >
                   <span style={{ fontSize: 20, flexShrink: 0 }}>{at.icon}</span>
                   <div style={{ flex: 1, minWidth: 0 }}>
-                    <div style={{ display: 'flex', alignItems: 'center', gap: 6 }}>
+                    <div style={{ display: 'flex', flexWrap: 'wrap', alignItems: 'center', gap: 6 }}>
                       <span style={{ fontSize: '0.85rem', fontWeight: 700, color: selected ? at.color : locked ? T3 : T1, fontFamily: PP }}>{at.label}</span>
                       {at.premium && <PremiumBadge />}
                       {locked && <span style={{ fontSize: 12 }}>🔒</span>}

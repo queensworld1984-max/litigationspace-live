@@ -2,7 +2,7 @@ import React, { useState } from 'react'
 import axios from 'axios'
 import Navbar from '../components/Navbar'
 import Footer from '../components/Footer'
-import { Link } from 'react-router-dom'
+import { Link, useSearchParams } from 'react-router-dom'
 
 const GOLD = '#F5A623'
 const DARK = '#0d1117'
@@ -19,6 +19,7 @@ const SUBJECTS = [
   'Account Access',
   'Feature Request',
   'Partnership / Nonprofit',
+  'Pro Bono Clinic Application',
   'Other',
 ]
 
@@ -35,9 +36,11 @@ const lbl: React.CSSProperties = {
 }
 
 export default function ContactUs() {
+  const [searchParams] = useSearchParams()
+  const initialSubject = searchParams.get('subject') === 'pro-bono-clinic' ? 'Pro Bono Clinic Application' : SUBJECTS[0]
   const [name, setName]       = useState('')
   const [email, setEmail]     = useState('')
-  const [subject, setSubject] = useState(SUBJECTS[0])
+  const [subject, setSubject] = useState(initialSubject)
   const [message, setMessage] = useState('')
   const [status, setStatus]   = useState<Status>('idle')
   const [errMsg, setErrMsg]   = useState('')

@@ -1,4 +1,4 @@
-import { useState } from 'react'
+import React, { useState, useEffect } from 'react'
 import { Link } from 'react-router-dom'
 import Navbar from '../components/Navbar'
 import Footer from '../components/Footer'
@@ -18,10 +18,10 @@ const FEATURES = [
 ]
 
 const STATS = [
-  { value: '50,000+', label: 'Cases Analyzed' },
-  { value: '12',      label: 'Countries Served' },
-  { value: '98%',     label: 'Client Satisfaction' },
-  { value: '500+',    label: 'Verified Experts' },
+  { value: '12',       label: 'Countries Served' },
+  { value: '8',        label: 'Communities We Serve' },
+  { value: '0%',       label: 'Platform Fees on Donations' },
+  { value: '501(c)(3)',label: 'Nonprofit Status' },
 ]
 
 const PILLARS = [
@@ -172,6 +172,151 @@ const WHY_US = [
   'Enterprise-grade security: SOC 2, AES-256 encryption, multi-tenant RBAC, IOLTA compliant',
 ]
 
+/* ── Feature mockup carousel (hero) ─────────────────────────────────────── */
+
+function MockupCard({ title, children }: { title: string; children: React.ReactNode }) {
+  return (
+    <div style={{
+      background: '#ffffff', borderRadius: 14, width: 300,
+      boxShadow: '0 30px 60px rgba(0,0,0,0.45)',
+      transform: 'perspective(900px) rotateY(-10deg) rotateX(3deg)',
+      overflow: 'hidden',
+    }}>
+      <div style={{ display: 'flex', alignItems: 'center', gap: 6, padding: '10px 14px', borderBottom: '1px solid #eee' }}>
+        <span style={{ width: 8, height: 8, borderRadius: '50%', background: '#f87171' }} />
+        <span style={{ width: 8, height: 8, borderRadius: '50%', background: '#fbbf24' }} />
+        <span style={{ width: 8, height: 8, borderRadius: '50%', background: '#34d399' }} />
+        <span style={{ marginLeft: 8, fontSize: 11, fontWeight: 700, color: '#0a0f1e' }}>{title}</span>
+      </div>
+      <div style={{ padding: '16px 16px 20px' }}>
+        {children}
+      </div>
+    </div>
+  )
+}
+
+const rowStyle: React.CSSProperties = { display: 'flex', alignItems: 'center', gap: 8, padding: '7px 0', borderTop: '1px solid #f3f4f6', fontSize: 11, color: '#374151' }
+
+const FEATURE_MOCKUPS: { key: string; label: string; card: React.ReactNode }[] = [
+  {
+    key: 'motion',
+    label: 'Motion Analyzer',
+    card: (
+      <MockupCard title="Motion Analysis">
+        <div style={{ display: 'flex', alignItems: 'center', gap: 10, marginBottom: 12 }}>
+          <div style={{ width: 44, height: 44, borderRadius: '50%', border: '4px solid #F5A623', display: 'flex', alignItems: 'center', justifyContent: 'center', fontSize: 13, fontWeight: 900, color: '#0a0f1e' }}>78</div>
+          <div>
+            <div style={{ fontSize: 11, fontWeight: 700, color: '#0a0f1e' }}>Win Probability</div>
+            <div style={{ fontSize: 10, color: '#6b7280' }}>Moderate confidence</div>
+          </div>
+        </div>
+        {['Key Weakness Detection', 'Suggested Attack Points', 'Case Law Verification'].map(t => (
+          <div key={t} style={rowStyle}><span style={{ width: 6, height: 6, borderRadius: '50%', background: '#F5A623', flexShrink: 0 }} />{t}</div>
+        ))}
+      </MockupCard>
+    ),
+  },
+  {
+    key: 'document',
+    label: 'Document Analyzer',
+    card: (
+      <MockupCard title="Document Analysis">
+        <div style={{ fontSize: 11, fontWeight: 700, color: '#0a0f1e', marginBottom: 10 }}>📄 NDA_Draft_v3.pdf</div>
+        {['Obligations & deadline mapping', 'Risk & liability flagging', 'Strategic issue spotting'].map(t => (
+          <div key={t} style={rowStyle}><span style={{ color: '#34d399', flexShrink: 0 }}>✓</span>{t}</div>
+        ))}
+      </MockupCard>
+    ),
+  },
+  {
+    key: 'cases',
+    label: 'Case Vault',
+    card: (
+      <MockupCard title="Case Vault">
+        <div style={{ fontSize: 11, fontWeight: 700, color: '#0a0f1e', marginBottom: 10 }}>Active Cases</div>
+        {[
+          { n: 'Chopra v. Meridian', s: 'On Track', c: '#34d399' },
+          { n: 'Estate of Alvarez', s: 'Due Soon', c: '#F5A623' },
+          { n: 'TAPDash Litigation', s: 'Discovery', c: '#38bdf8' },
+        ].map(c => (
+          <div key={c.n} style={{ ...rowStyle, justifyContent: 'space-between' }}>
+            <span>{c.n}</span>
+            <span style={{ color: c.c, fontWeight: 700, fontSize: 10 }}>{c.s}</span>
+          </div>
+        ))}
+      </MockupCard>
+    ),
+  },
+  {
+    key: 'legal-brain',
+    label: 'Legal Brain',
+    card: (
+      <MockupCard title="Legal Brain">
+        <div style={{ background: '#f3f4f6', borderRadius: 10, padding: '8px 10px', fontSize: 10.5, color: '#374151', marginBottom: 8 }}>
+          What's the statute of limitations for breach of contract in NY?
+        </div>
+        <div style={{ background: 'rgba(245,166,35,0.10)', border: '1px solid rgba(245,166,35,0.25)', borderRadius: 10, padding: '8px 10px', fontSize: 10.5, color: '#0a0f1e', lineHeight: 1.5 }}>
+          In New York, the statute of limitations for breach of a written contract is <strong>6 years</strong> (CPLR § 213)…
+        </div>
+      </MockupCard>
+    ),
+  },
+  {
+    key: 'billing',
+    label: 'Billing',
+    card: (
+      <MockupCard title="Billing">
+        <div style={{ fontSize: 11, fontWeight: 700, color: '#0a0f1e', marginBottom: 10 }}>Time Entries — This Week</div>
+        {[
+          { d: 'Discovery review', h: '2.5 hrs' },
+          { d: 'Client call', h: '0.75 hrs' },
+          { d: 'Motion drafting', h: '3.0 hrs' },
+        ].map(e => (
+          <div key={e.d} style={{ ...rowStyle, justifyContent: 'space-between' }}>
+            <span>{e.d}</span><span style={{ fontWeight: 700 }}>{e.h}</span>
+          </div>
+        ))}
+      </MockupCard>
+    ),
+  },
+]
+
+const CAROUSEL_INTERVAL_MS = 2800
+
+function FeatureCarousel() {
+  const [activeIndex, setActiveIndex] = useState(0)
+
+  useEffect(() => {
+    const id = setInterval(() => {
+      setActiveIndex(i => (i + 1) % FEATURE_MOCKUPS.length)
+    }, CAROUSEL_INTERVAL_MS)
+    return () => clearInterval(id)
+  }, [])
+
+  return (
+    <div style={{
+      display: 'flex', flexDirection: 'column', alignItems: 'center',
+      minHeight: 300, padding: '10px 0',
+    }}>
+      <div style={{ flex: 1, display: 'flex', alignItems: 'center', justifyContent: 'center', width: '100%', overflow: 'hidden', padding: '18px 0' }}>
+        <div key={activeIndex} className="carouselSlide">
+          {FEATURE_MOCKUPS[activeIndex].card}
+        </div>
+      </div>
+
+      <div style={{ display: 'flex', gap: 6, marginTop: 8 }}>
+        {FEATURE_MOCKUPS.map((m, i) => (
+          <span key={m.key} style={{
+            width: i === activeIndex ? 18 : 6, height: 6, borderRadius: 999,
+            background: i === activeIndex ? '#F5A623' : 'rgba(255,255,255,0.2)',
+            transition: 'all 0.3s ease',
+          }} />
+        ))}
+      </div>
+    </div>
+  )
+}
+
 /* ── Component ───────────────────────────────────────────────────────────── */
 
 export default function Home() {
@@ -281,41 +426,66 @@ export default function Home() {
           pointer-events: none;
         }
         .heroCta:hover::after { left: 130%; }
+
+        @keyframes carouselIn { from { opacity: 0; transform: translateY(12px); } to { opacity: 1; transform: translateY(0); } }
+        .carouselSlide { animation: carouselIn 0.5s ease both; }
       `}</style>
       <Navbar />
 
       {/* ── 1. HERO ───────────────────────────────────────────────────────── */}
-      <section className="heroSection" style={{ padding: 0, position: 'relative', lineHeight: 0 }}>
+      <section className="heroSection" style={{ background: '#0a0c14', padding: '76px 24px 56px' }}>
+        <div style={{ maxWidth: 1180, margin: '0 auto' }}>
 
-        {/* Hero image — full width, natural height, no cropping */}
-        <img
-          src="/hero-image.jpg"
-          alt="LitigationSpace — Strategy. Evidence. Victory. All in One Platform."
-          style={{ display: 'block', width: '100%', height: 'auto' }}
-        />
-
-      </section>
-
-      {/* ── CTA BAR ──────────────────────────────────────────────────────── */}
-      <section style={{ background: '#0a0c14', padding: '52px 24px' }}>
-        <div style={{ maxWidth: 1100, margin: '0 auto', textAlign: 'center' }}>
-
-          <p style={{
-            fontSize: 'clamp(1.4rem, 3vw, 2.2rem)', fontWeight: 900,
-            letterSpacing: '-0.01em',
-            background: 'linear-gradient(135deg, #ffd700 0%, #F5A623 40%, #ffe066 70%, #b8760a 100%)',
-            WebkitBackgroundClip: 'text', WebkitTextFillColor: 'transparent', backgroundClip: 'text',
-            marginBottom: 32, fontFamily: "'Playfair Display', Georgia, serif",
+          <div style={{
+            display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(340px, 1fr))',
+            gap: 44, alignItems: 'center', marginBottom: 48,
           }}>
-            Start here — no account required
-          </p>
+
+            {/* ── Left: copy ── */}
+            <div>
+              <div style={{
+                display: 'inline-flex', alignItems: 'center', gap: 8,
+                background: 'rgba(245,166,35,0.10)', border: '1px solid rgba(245,166,35,0.30)',
+                borderRadius: 999, padding: '6px 18px', marginBottom: 26,
+              }}>
+                <span style={{ width: 6, height: 6, borderRadius: '50%', background: '#F5A623', display: 'inline-block' }} />
+                <span style={{ color: '#F5A623', fontSize: 11, fontWeight: 700, letterSpacing: '0.09em', textTransform: 'uppercase' }}>
+                  A Build Champions 501(c)(3) Initiative
+                </span>
+              </div>
+
+              <h1 style={{
+                fontFamily: "'Playfair Display', Georgia, serif", fontWeight: 900,
+                fontSize: 'clamp(2rem, 4vw, 3.2rem)', lineHeight: 1.15,
+                margin: '0 0 24px', color: '#ffffff',
+              }}>
+                Litigation Tools Shouldn't Depend on{' '}
+                <span style={{
+                  background: 'linear-gradient(135deg, #ffd700 0%, #F5A623 40%, #ffe066 70%, #b8760a 100%)',
+                  WebkitBackgroundClip: 'text', WebkitTextFillColor: 'transparent', backgroundClip: 'text',
+                }}>Your Budget</span>
+              </h1>
+
+              <p style={{ color: 'rgba(255,255,255,0.75)', fontSize: 15.5, lineHeight: 1.75, margin: '0 0 16px' }}>
+                LitigationSpace.org is operated by <strong style={{ color: '#e2e8f0' }}>Build Champions</strong>, a 501(c)(3) nonprofit, to expand access to justice. It offers case management, document automation, and AI-assisted legal drafting at reduced cost for individuals and small practices — completely free for approved pro bono legal clinics.
+              </p>
+
+              <p style={{ color: 'rgba(255,255,255,0.6)', fontSize: 14, lineHeight: 1.75, margin: 0 }}>
+                Reduced-fee access sustains free service for pro bono clinics, legal aid organizations, and public defenders. No platform markup, no shareholders — every fee goes toward keeping the tools running and expanding who they reach.
+              </p>
+            </div>
+
+            {/* ── Right: live stats panel ── */}
+            <FeatureCarousel />
+
+          </div>
 
           <div style={{
             display: 'flex', flexWrap: 'wrap', gap: 16,
             justifyContent: 'center', alignItems: 'center',
           }}>
 
-            {/* Get Started — gold */}
+            {/* Join Free — gold */}
             <Link to="/register" style={{ textDecoration: 'none' }} className="heroCta">
               <span style={{
                 display: 'inline-flex', alignItems: 'center', gap: 9,
@@ -326,7 +496,22 @@ export default function Home() {
                 fontFamily: 'Inter, sans-serif', letterSpacing: '-0.01em', whiteSpace: 'nowrap',
               }}>
                 <svg width="16" height="16" viewBox="0 0 16 16" fill="none"><path d="M8 1v14M1 8h14" stroke="currentColor" strokeWidth="2" strokeLinecap="round"/></svg>
-                Get Started
+                Join Free
+              </span>
+            </Link>
+
+            {/* Apply as a Pro Bono Clinic — outline */}
+            <Link to="/contact?subject=pro-bono-clinic" style={{ textDecoration: 'none' }} className="heroCta">
+              <span style={{
+                display: 'inline-flex', alignItems: 'center', gap: 9,
+                padding: '15px 36px', borderRadius: 12,
+                background: 'rgba(255,255,255,0.05)',
+                border: '1.5px solid rgba(255,255,255,0.28)',
+                color: '#ffffff', fontWeight: 700, fontSize: '1rem',
+                fontFamily: 'Inter, sans-serif', letterSpacing: '-0.01em', whiteSpace: 'nowrap',
+              }}>
+                <svg width="15" height="15" viewBox="0 0 15 15" fill="none"><path d="M7.5 1.5c-3 0-5.5 2.2-5.5 5.3 0 3.6 5.5 7.2 5.5 7.2s5.5-3.6 5.5-7.2c0-3.1-2.5-5.3-5.5-5.3z" stroke="currentColor" strokeWidth="1.4" strokeLinejoin="round"/></svg>
+                Apply as a Pro Bono Clinic
               </span>
             </Link>
 
@@ -653,17 +838,24 @@ export default function Home() {
           </p>
 
           <div style={{ background: 'rgba(245,166,35,0.07)', border: '1px solid rgba(245,166,35,0.2)', borderRadius: 12, padding: '16px 20px', marginBottom: 28 }}>
-            <p style={{ margin: '0 0 10px', fontSize: 13, fontWeight: 700, color: '#F5A623' }}>Consultation Pricing</p>
+            <p style={{ margin: '0 0 12px', fontSize: 13, fontWeight: 700, color: '#F5A623' }}>Pricing</p>
             {[
-              { tier: 'Free',         desc: 'General legal information, public case law' },
-              { tier: 'Professional', desc: 'Case-specific analysis, document review' },
-              { tier: 'Firm',         desc: 'Team access, bulk queries, API integration' },
+              { tier: 'Join Free',            price: '$0',                 desc: 'General research, Motion & Document Analyzer, limited Legal Brain' },
+              { tier: 'Legal aid & clinics',  price: '$0, by application', desc: 'Full platform, free for approved pro bono orgs' },
+              { tier: 'Paid plans',           price: 'from $19/mo',        desc: 'Reduced-fee plans for solo practitioners and small firms' },
             ].map(t => (
-              <div key={t.tier} style={{ display: 'flex', gap: 10, fontSize: 13, marginBottom: 7 }}>
-                <span style={{ color: '#F5A623', fontWeight: 700, width: 90, flexShrink: 0 }}>{t.tier}</span>
-                <span style={{ color: 'rgba(255,255,255,0.65)' }}>{t.desc}</span>
+              <div key={t.tier} style={{ marginBottom: 12 }}>
+                <div style={{ display: 'flex', gap: 8, alignItems: 'baseline', fontSize: 13 }}>
+                  <span style={{ color: '#F5A623', fontWeight: 700 }}>{t.tier}</span>
+                  <span style={{ color: 'rgba(255,255,255,0.5)' }}>—</span>
+                  <span style={{ color: 'rgba(255,255,255,0.85)', fontWeight: 600 }}>{t.price}</span>
+                </div>
+                <p style={{ margin: '2px 0 0', fontSize: 12, color: 'rgba(255,255,255,0.65)' }}>{t.desc}</p>
               </div>
             ))}
+            <Link to="/pricing" style={{ display: 'inline-block', marginTop: 4, fontSize: 12.5, fontWeight: 700, color: '#F5A623', textDecoration: 'none' }}>
+              View Full Pricing →
+            </Link>
           </div>
 
           <div style={{ display: 'flex', flexDirection: 'column', gap: 10, marginBottom: 32 }}>
@@ -1110,7 +1302,7 @@ export default function Home() {
             <div style={{ textAlign: 'center', marginBottom: 48 }}>
               <div className="secLabel" style={{ color: '#F5A623', marginBottom: 16 }}>Why Us</div>
               <h2 style={{ ...S.h2, fontSize: 38, color: '#0a0f1e', marginBottom: 16 }}>
-                Why Legal Professionals<br /><span style={S.goldText}>Choose LitigationSpace</span>
+                Why Legal Professionals — and the People They Represent —<br /><span style={S.goldText}>Choose LitigationSpace</span>
               </h2>
               <p style={{ color: '#1a1a1a', fontSize: 15, lineHeight: 1.7 }}>
                 Designed for legal professionals — from solo practitioners to firms handling 300+ active matters.
@@ -1327,20 +1519,20 @@ export default function Home() {
             <Logo size="lg" litigationColor="#ffffff" />
           </div>
           <h2 style={{ ...S.h2, fontSize: 48, color: '#ffffff', marginBottom: 16 }}>
-            Ready to Win <span style={S.goldText}>More Cases?</span>
+            Ready to <span style={S.goldText}>Get Access?</span>
           </h2>
           <p style={{ color: 'rgba(255,255,255,0.7)', fontSize: 16, maxWidth: 520, margin: '0 auto 36px', lineHeight: 1.7 }}>
-            Join legal professionals using AI to work smarter, research faster, and draft with confidence. Start free today — no setup required.
+            Join attorneys, pro se litigants, and legal aid organizations using LitigationSpace.org to manage cases and draft with confidence — at reduced cost, and free for approved pro bono legal clinics.
           </p>
           <div style={{ display: 'flex', gap: 14, justifyContent: 'center', flexWrap: 'wrap', marginBottom: 28 }}>
             <Link to="/register" style={{ background: '#F5A623', color: '#000000', fontWeight: 700, fontSize: 16, padding: '14px 32px', borderRadius: 9, textDecoration: 'none', boxShadow: '0 4px 28px rgba(245,166,35,0.35)' }}>
-              Start Free Trial →
+              Join Free →
             </Link>
             <Link to="/pricing" style={{ background: 'rgba(255,255,255,0.08)', color: '#ffffff', fontWeight: 600, fontSize: 16, padding: '14px 32px', borderRadius: 9, textDecoration: 'none', border: '1.5px solid rgba(255,255,255,0.2)' }}>
               View Pricing
             </Link>
           </div>
-          <p style={{ color: 'rgba(255,255,255,0.75)', fontSize: 13 }}>No credit card required · 14-day free trial · Cancel anytime</p>
+          <p style={{ color: 'rgba(255,255,255,0.75)', fontSize: 13 }}>No credit card required to explore free tools · Apply anytime as a pro bono clinic</p>
         </div>
       </section>
 
@@ -1393,10 +1585,9 @@ export default function Home() {
                 <div style={{ display: 'flex', gap: 10, fontSize: 12, color: 'rgba(255,255,255,0.8)', marginBottom: 12 }}>
                   <span style={{ color: '#F5A623', fontWeight: 700 }}>★ {exp.rating}</span>
                   <span>{exp.cases} cases</span>
-                  <span style={{ marginLeft: 'auto', fontWeight: 700, color: '#0a0f1e', fontSize: 13 }}>${exp.rate}/hr</span>
                 </div>
                 <Link to="/live-bench" style={{ display: 'block', textAlign: 'center', background: 'linear-gradient(to right,#F5A623,#ffd700)', color: '#000000', fontWeight: 700, fontSize: 12, padding: '8px', borderRadius: 8, textDecoration: 'none' }}>
-                  View Profile &amp; Hire
+                  Task Request
                 </Link>
               </div>
             ))}

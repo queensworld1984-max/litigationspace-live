@@ -4,6 +4,7 @@ from fastapi.security import HTTPBearer, HTTPAuthorizationCredentials
 from app.utils.auth import decode_token
 from pydantic import BaseModel
 from datetime import datetime, timedelta, timezone
+from typing import Optional
 import secrets
 import os
 
@@ -69,9 +70,10 @@ async def register(req: RegisterRequest):
                email_verified, email_verification_token, email_verification_expires_at)
                VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)""",
             (user_id, tenant_id, email, pw_hash, req.full_name, req.role,
-             req.bar_number, req.jurisdiction, req.specializations, req.hourly_rate,
-             req.bio, "READY" if os.getenv('STAGING', '').lower() in ('1', 'true', 'yes') else "LOCKED",
-             1 if os.getenv('STAGING', '').lower() in ('1', 'true', 'yes') else 0, verification_token, verification_expires)
+             req.bar_number, req.jurisdiction, req.specializations, req.hourly_rate, req.bio,
+             # New accounts are active immediately — no admin "send login email" gate.
+             # (Previously LOCKED/unverified until an admin manually verified, except in STAGING.)
+             "READY", 1, verification_token, verification_expires)
         )
 
         _seed_workflow_templates(db)
@@ -91,7 +93,7 @@ async def register(req: RegisterRequest):
                 "email": email,
                 "full_name": req.full_name,
                 "role": req.role,
-                "email_verified": True if os.getenv('STAGING', '').lower() in ('1', 'true', 'yes') else False,
+                "email_verified": True,
             }
         )
 
@@ -106,11 +108,32 @@ async def login(req: LoginRequest):
         if not user or not verify_password(req.password, user["password_hash"]):
             raise HTTPException(status_code=401, detail="Invalid credentials")
 
+        # Admin block / lock-out — no login until an admin unlocks
+        try:
+            if int(user["admin_blocked"] or 0) == 1:
+                raise HTTPException(
+                    status_code=403,
+                    detail="This account has been blocked by an administrator. Contact support.",
+                )
+        except (KeyError, IndexError, TypeError):
+            pass
+        except HTTPException:
+            raise
+
         email_verified = user["email_verified"] if "email_verified" in user.keys() else 1
-        if not email_verified and not os.getenv('STAGING', '').lower() in ('1', 'true', 'yes'):
+        status_u = (user["status"] or "").upper()
+        staging = os.getenv('STAGING', '').lower() in ('1', 'true', 'yes')
+        if not email_verified and not staging:
             raise HTTPException(
                 status_code=403,
                 detail="Please verify your email before signing in. Check your inbox or request a new verification link."
+            )
+        # Admin may lock a verified account (status LOCKED + admin_blocked handled above;
+        # also reject plain LOCKED when verified unless staging)
+        if status_u == "LOCKED" and email_verified and not staging:
+            raise HTTPException(
+                status_code=403,
+                detail="This account is locked. Contact an administrator.",
             )
 
         token = create_access_token(user["id"], user["tenant_id"], user["role"], user["email"])
@@ -133,12 +156,23 @@ async def verify_email(token: str):
     from fastapi.responses import RedirectResponse
 
     with get_db() as db:
+        try:
+            cols = {c["name"] for c in db.execute("PRAGMA table_info(users)").fetchall()}
+            if "admin_blocked" not in cols:
+                db.execute("ALTER TABLE users ADD COLUMN admin_blocked INTEGER DEFAULT 0")
+        except Exception:
+            pass
         user = db.execute(
-            "SELECT id, email, full_name, email_verification_token, email_verification_expires_at FROM users WHERE email_verification_token = ?",
+            "SELECT id, email, full_name, email_verification_token, email_verification_expires_at, "
+            "COALESCE(admin_blocked, 0) AS admin_blocked "
+            "FROM users WHERE email_verification_token = ?",
             (token,)
         ).fetchone()
         if not user:
             return RedirectResponse(url="/login?error=link_invalid", status_code=302)
+
+        if int(user["admin_blocked"] or 0) == 1:
+            return RedirectResponse(url="/login?error=account_blocked", status_code=302)
 
         expires_at = user["email_verification_expires_at"]
         if expires_at:
@@ -355,37 +389,163 @@ def _seed_workflow_templates(db):
 # ADMIN — User Management
 # ══════════════════════════════════════════════════════════════
 
+def _require_admin(credentials: HTTPAuthorizationCredentials) -> dict:
+    payload = decode_token(credentials.credentials)
+    if payload.get("role") != "admin":
+        raise HTTPException(403, "Admin access required")
+    return payload
+
+
+def _ensure_admin_user_columns(db) -> None:
+    """Add admin_blocked (and related) columns if missing."""
+    try:
+        cols = {c["name"] for c in db.execute("PRAGMA table_info(users)").fetchall()}
+        if "admin_blocked" not in cols:
+            db.execute("ALTER TABLE users ADD COLUMN admin_blocked INTEGER DEFAULT 0")
+        if "admin_notes" not in cols:
+            db.execute("ALTER TABLE users ADD COLUMN admin_notes TEXT")
+    except Exception:
+        pass
+
+
+class AdminUserUpdateRequest(BaseModel):
+    email: Optional[str] = None
+    full_name: Optional[str] = None
+    role: Optional[str] = None
+    admin_notes: Optional[str] = None
+
+
 @router.get("/admin/users")
 async def admin_list_users(
     status: str = None,
     verified: str = None,
+    blocked: str = None,
     search: str = None,
-    limit: int = 100,
+    limit: int = 200,
     credentials: HTTPAuthorizationCredentials = Depends(HTTPBearer()),
 ):
     """Admin: list all users with optional filters."""
-    payload = decode_token(credentials.credentials)
-    if payload.get("role") != "admin":
-        raise HTTPException(403, "Admin access required")
-
-    query = "SELECT id, email, full_name, role, status, email_verified, created_at, verified_at FROM users WHERE 1=1"
-    params = []
-    if status:
-        query += " AND status = ?"
-        params.append(status)
-    if verified == "0":
-        query += " AND email_verified = 0"
-    elif verified == "1":
-        query += " AND email_verified = 1"
-    if search:
-        query += " AND (LOWER(email) LIKE ? OR LOWER(full_name) LIKE ?)"
-        params += [f"%{search.lower()}%", f"%{search.lower()}%"]
-    query += " ORDER BY created_at DESC LIMIT ?"
-    params.append(limit)
+    _require_admin(credentials)
 
     with get_db() as db:
+        _ensure_admin_user_columns(db)
+        query = (
+            "SELECT id, email, full_name, role, status, email_verified, created_at, verified_at, "
+            "COALESCE(admin_blocked, 0) AS admin_blocked, admin_notes "
+            "FROM users WHERE 1=1"
+        )
+        params = []
+        if status:
+            query += " AND status = ?"
+            params.append(status)
+        if verified == "0":
+            query += " AND email_verified = 0"
+        elif verified == "1":
+            query += " AND email_verified = 1"
+        if blocked == "1":
+            query += " AND COALESCE(admin_blocked, 0) = 1"
+        elif blocked == "0":
+            query += " AND COALESCE(admin_blocked, 0) = 0"
+        if search:
+            query += " AND (LOWER(email) LIKE ? OR LOWER(full_name) LIKE ?)"
+            params += [f"%{search.lower()}%", f"%{search.lower()}%"]
+        query += " ORDER BY created_at DESC LIMIT ?"
+        params.append(limit)
         rows = db.execute(query, params).fetchall()
-    return {"users": [dict(r) for r in rows], "total": len(rows)}
+    users = []
+    for r in rows:
+        d = dict(r)
+        d["admin_blocked"] = bool(d.get("admin_blocked"))
+        d["email_verified"] = bool(d.get("email_verified"))
+        # Convenience for UI
+        d["can_login"] = (
+            not d["admin_blocked"]
+            and d.get("status") == "READY"
+            and d["email_verified"]
+        )
+        users.append(d)
+    return {"users": users, "total": len(users)}
+
+
+@router.patch("/admin/users/{user_id}")
+async def admin_update_user(
+    user_id: str,
+    req: AdminUserUpdateRequest,
+    credentials: HTTPAuthorizationCredentials = Depends(HTTPBearer()),
+):
+    """Admin: edit email, name, role, or notes — before or after login is sent."""
+    admin = _require_admin(credentials)
+    if admin.get("sub") == user_id and req.role and req.role != "admin":
+        raise HTTPException(400, "You cannot demote your own admin role")
+
+    with get_db() as db:
+        _ensure_admin_user_columns(db)
+        user = db.execute("SELECT * FROM users WHERE id = ?", (user_id,)).fetchone()
+        if not user:
+            raise HTTPException(404, "User not found")
+        user = dict(user)
+
+        updates = []
+        params = []
+
+        if req.email is not None:
+            new_email = _normalize_email(req.email)
+            if not new_email or "@" not in new_email:
+                raise HTTPException(400, "Invalid email address")
+            clash = db.execute(
+                "SELECT id FROM users WHERE LOWER(email) = ? AND id != ?",
+                (new_email, user_id),
+            ).fetchone()
+            if clash:
+                raise HTTPException(400, "That email is already registered to another account")
+            updates.append("email = ?")
+            params.append(new_email)
+            # Changing email before they login: force re-verify unless admin re-sends
+            if new_email != (user.get("email") or "").lower():
+                updates.append("email_verified = 0")
+                updates.append("status = 'LOCKED'")
+                updates.append("email_verification_token = NULL")
+                updates.append("email_verification_expires_at = NULL")
+                updates.append("verified_at = NULL")
+
+        if req.full_name is not None:
+            name = req.full_name.strip()
+            if not name:
+                raise HTTPException(400, "Name cannot be empty")
+            updates.append("full_name = ?")
+            params.append(name)
+
+        if req.role is not None:
+            role = req.role.strip().lower()
+            allowed = {
+                "admin", "attorney", "paralegal", "client",
+                "expert_pending", "expert_active", "staff",
+            }
+            if role not in allowed:
+                raise HTTPException(400, f"Invalid role. Allowed: {', '.join(sorted(allowed))}")
+            updates.append("role = ?")
+            params.append(role)
+
+        if req.admin_notes is not None:
+            updates.append("admin_notes = ?")
+            params.append(req.admin_notes)
+
+        if not updates:
+            raise HTTPException(400, "No changes provided")
+
+        params.append(user_id)
+        db.execute(f"UPDATE users SET {', '.join(updates)} WHERE id = ?", params)
+        updated = db.execute(
+            "SELECT id, email, full_name, role, status, email_verified, "
+            "COALESCE(admin_blocked,0) AS admin_blocked, admin_notes, created_at, verified_at "
+            "FROM users WHERE id = ?",
+            (user_id,),
+        ).fetchone()
+
+    d = dict(updated)
+    d["admin_blocked"] = bool(d.get("admin_blocked"))
+    d["email_verified"] = bool(d.get("email_verified"))
+    return {"ok": True, "user": d}
 
 
 @router.post("/admin/users/{user_id}/verify")
@@ -393,17 +553,17 @@ async def admin_verify_user(
     user_id: str,
     credentials: HTTPAuthorizationCredentials = Depends(HTTPBearer()),
 ):
-    """Admin: manually verify and unlock a user account."""
-    payload = decode_token(credentials.credentials)
-    if payload.get("role") != "admin":
-        raise HTTPException(403, "Admin access required")
+    """Admin: manually verify and unlock a user account (allow login)."""
+    _require_admin(credentials)
 
     with get_db() as db:
+        _ensure_admin_user_columns(db)
         user = db.execute("SELECT id, email, full_name FROM users WHERE id = ?", (user_id,)).fetchone()
         if not user:
             raise HTTPException(404, "User not found")
         db.execute(
             "UPDATE users SET email_verified=1, status='READY', "
+            "admin_blocked=0, "
             "email_verification_token=NULL, email_verification_expires_at=NULL, "
             "verified_at=datetime('now') WHERE id=?",
             (user_id,)
@@ -411,31 +571,115 @@ async def admin_verify_user(
     return {"ok": True, "user_id": user_id, "email": user["email"]}
 
 
+@router.post("/admin/users/{user_id}/lock")
+async def admin_lock_user(
+    user_id: str,
+    credentials: HTTPAuthorizationCredentials = Depends(HTTPBearer()),
+):
+    """Admin: lock account — user cannot log in until unlocked/verified."""
+    admin = _require_admin(credentials)
+    if admin.get("sub") == user_id:
+        raise HTTPException(400, "You cannot lock your own admin account")
+
+    with get_db() as db:
+        _ensure_admin_user_columns(db)
+        user = db.execute("SELECT id, email FROM users WHERE id = ?", (user_id,)).fetchone()
+        if not user:
+            raise HTTPException(404, "User not found")
+        db.execute(
+            "UPDATE users SET status='LOCKED', "
+            "email_verification_token=NULL, email_verification_expires_at=NULL "
+            "WHERE id=?",
+            (user_id,),
+        )
+    return {"ok": True, "user_id": user_id, "email": user["email"], "status": "LOCKED"}
+
+
+@router.post("/admin/users/{user_id}/block")
+async def admin_block_user(
+    user_id: str,
+    credentials: HTTPAuthorizationCredentials = Depends(HTTPBearer()),
+):
+    """Admin: hard-block account — no login, no verification email until unblocked."""
+    admin = _require_admin(credentials)
+    if admin.get("sub") == user_id:
+        raise HTTPException(400, "You cannot block your own admin account")
+
+    with get_db() as db:
+        _ensure_admin_user_columns(db)
+        user = db.execute("SELECT id, email FROM users WHERE id = ?", (user_id,)).fetchone()
+        if not user:
+            raise HTTPException(404, "User not found")
+        db.execute(
+            "UPDATE users SET admin_blocked=1, status='LOCKED', "
+            "email_verification_token=NULL, email_verification_expires_at=NULL "
+            "WHERE id=?",
+            (user_id,),
+        )
+    return {"ok": True, "user_id": user_id, "email": user["email"], "admin_blocked": True}
+
+
+@router.post("/admin/users/{user_id}/unblock")
+async def admin_unblock_user(
+    user_id: str,
+    credentials: HTTPAuthorizationCredentials = Depends(HTTPBearer()),
+):
+    """Admin: remove hard block (does not auto-verify — use Verify & Unlock for full access)."""
+    _require_admin(credentials)
+
+    with get_db() as db:
+        _ensure_admin_user_columns(db)
+        user = db.execute(
+            "SELECT id, email, email_verified FROM users WHERE id = ?", (user_id,)
+        ).fetchone()
+        if not user:
+            raise HTTPException(404, "User not found")
+        # Clear block; keep LOCKED if still unverified
+        if user["email_verified"]:
+            db.execute(
+                "UPDATE users SET admin_blocked=0, status='READY' WHERE id=?",
+                (user_id,),
+            )
+            status = "READY"
+        else:
+            db.execute(
+                "UPDATE users SET admin_blocked=0, status='LOCKED' WHERE id=?",
+                (user_id,),
+            )
+            status = "LOCKED"
+    return {"ok": True, "user_id": user_id, "email": user["email"], "admin_blocked": False, "status": status}
+
+
 @router.post("/admin/users/{user_id}/resend-verification")
 async def admin_resend_verification(
     user_id: str,
     credentials: HTTPAuthorizationCredentials = Depends(HTTPBearer()),
 ):
-    """Admin: generate a fresh verification token and resend the email."""
-    payload = decode_token(credentials.credentials)
-    if payload.get("role") != "admin":
-        raise HTTPException(403, "Admin access required")
+    """Admin: generate a fresh verification/login link and email it (only if not blocked)."""
+    _require_admin(credentials)
 
     with get_db() as db:
-        user = db.execute("SELECT id, email, full_name, email_verified FROM users WHERE id = ?", (user_id,)).fetchone()
+        _ensure_admin_user_columns(db)
+        user = db.execute(
+            "SELECT id, email, full_name, email_verified, COALESCE(admin_blocked,0) AS admin_blocked "
+            "FROM users WHERE id = ?",
+            (user_id,),
+        ).fetchone()
         if not user:
             raise HTTPException(404, "User not found")
+        if int(user["admin_blocked"] or 0) == 1:
+            raise HTTPException(400, "User is blocked. Unblock before sending a login email.")
         if user["email_verified"]:
-            raise HTTPException(400, "User is already verified")
+            raise HTTPException(400, "User is already verified — they can sign in with their password")
         new_token = _generate_token()
         expires = (datetime.now(timezone.utc) + timedelta(hours=24)).isoformat()
         db.execute(
-            "UPDATE users SET email_verification_token=?, email_verification_expires_at=? WHERE id=?",
+            "UPDATE users SET email_verification_token=?, email_verification_expires_at=?, status='LOCKED' WHERE id=?",
             (new_token, expires, user_id)
         )
 
     send_verification_email(user["email"], new_token, user["full_name"])
-    return {"ok": True, "email": user["email"]}
+    return {"ok": True, "email": user["email"], "message": "Login / verification email sent"}
 
 
 @router.post("/admin/users/{user_id}/delete")
@@ -444,9 +688,9 @@ async def admin_delete_user(
     credentials: HTTPAuthorizationCredentials = Depends(HTTPBearer()),
 ):
     """Admin: permanently delete a user account."""
-    payload = decode_token(credentials.credentials)
-    if payload.get("role") != "admin":
-        raise HTTPException(403, "Admin access required")
+    admin = _require_admin(credentials)
+    if admin.get("sub") == user_id:
+        raise HTTPException(400, "You cannot delete your own admin account")
 
     with get_db() as db:
         user = db.execute("SELECT id, email FROM users WHERE id = ?", (user_id,)).fetchone()
@@ -462,9 +706,7 @@ async def admin_toggle_password_lock(
     credentials: HTTPAuthorizationCredentials = Depends(HTTPBearer()),
 ):
     """Admin: lock or unlock password changes for a specific user."""
-    payload = decode_token(credentials.credentials)
-    if payload.get("role") != "admin":
-        raise HTTPException(403, "Admin access required")
+    _require_admin(credentials)
 
     with get_db() as db:
         user = db.execute("SELECT id, email, password_change_locked FROM users WHERE id = ?", (user_id,)).fetchone()

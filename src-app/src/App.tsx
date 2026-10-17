@@ -117,9 +117,9 @@ function AppRoutes() {
       <Route path="/legal-brain" element={<LegalBrain />} />
       <Route path="/legal-database" element={<LegalDatabase />} />
 
-      {/* Live Bench — both public routes */}
-      <Route path="/live-bench" element={<LiveBench />} />
-      <Route path="/marketplace" element={<LiveBench />} />
+      {/* Live Bench — requires login */}
+      <Route path="/live-bench" element={<RequireAuth><LiveBench /></RequireAuth>} />
+      <Route path="/marketplace" element={<RequireAuth><LiveBench /></RequireAuth>} />
       <Route path="/bench/inbox" element={<BenchInbox />} />
       <Route path="/bench/engagements" element={<BenchInbox />} />
 

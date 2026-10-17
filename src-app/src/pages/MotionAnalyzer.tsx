@@ -355,6 +355,8 @@ export default function MotionAnalyzer() {
   }, [isAuthenticated])
 
   const refreshHistory = () => {
+    // Guests have no history; calling it would 401 and the api interceptor would bounce them to /login
+    if (!isAuthenticated) return
     motionAPI.listHistory()
       .then(r => setHistory((r.data as { analyses: HistoryItem[] }).analyses || []))
       .catch(() => {})

@@ -191,7 +191,7 @@ export default function Pricing() {
 
       <Navbar />
 
-      <div style={{ maxWidth: 1200, margin: '0 auto', padding: '96px 36px 140px', boxSizing: 'border-box', position: 'relative', zIndex: 1 }}>
+      <div style={{ maxWidth: 1200, margin: '0 auto', padding: '96px clamp(16px, 4vw, 36px) 140px', boxSizing: 'border-box', position: 'relative', zIndex: 1 }}>
 
         {/* Ornament */}
         <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'center', gap: 14, marginBottom: 32 }}>
@@ -205,7 +205,7 @@ export default function Pricing() {
           <div style={{ display: 'inline-block', fontFamily: 'Inter, sans-serif', fontSize: 11, fontWeight: 700, letterSpacing: '0.22em', textTransform: 'uppercase', color: '#9a7010', background: 'rgba(190,148,35,0.10)', border: '1px solid rgba(190,148,35,0.30)', borderRadius: 9999, padding: '5px 18px', marginBottom: 24 }}>
             Institutional-Grade Legal AI
           </div>
-          <h1 style={{ fontFamily: '"Playfair Display", Georgia, serif', fontSize: 58, fontWeight: 900, lineHeight: 1.08, margin: '0 0 20px', color: '#0c2461', letterSpacing: '-0.02em' }}>
+          <h1 style={{ fontFamily: '"Playfair Display", Georgia, serif', fontSize: 'clamp(36px, 8vw, 58px)', fontWeight: 900, lineHeight: 1.08, margin: '0 0 20px', color: '#0c2461', letterSpacing: '-0.02em' }}>
             Simple, Transparent Pricing
           </h1>
           <p style={{ fontSize: 16, color: '#111', maxWidth: 560, margin: '0 auto 40px', lineHeight: 1.7 }}>
@@ -254,7 +254,7 @@ export default function Pricing() {
         </div>
 
         {/* Plan cards */}
-        <div style={{ display: 'grid', gridTemplateColumns: 'repeat(4,1fr)', gap: 22, marginBottom: 80, alignItems: 'start' }}>
+        <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(min(100%, 240px), 1fr))', gap: 22, marginBottom: 80, alignItems: 'start' }}>
           {PLANS.map(plan => (
             <div key={plan.id} style={{ border: plan.popular ? '1.5px solid #C9A020' : '1.5px solid #ddd5b8', borderRadius: 20, padding: '36px 26px 30px', background: plan.popular ? '#FFFDF4' : '#fff', display: 'flex', flexDirection: 'column', position: 'relative', overflow: 'hidden', boxShadow: plan.popular ? '0 6px 32px rgba(190,148,35,0.16)' : '0 4px 24px rgba(0,0,0,0.07)', transition: 'transform .2s,box-shadow .2s' }}>
               {/* Top accent line */}

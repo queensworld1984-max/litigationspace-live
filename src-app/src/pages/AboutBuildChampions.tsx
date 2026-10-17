@@ -87,7 +87,7 @@ export default function AboutBuildChampions() {
       </div>
 
       {/* ── Main: form + sidebar ──────────────────────────────────────── */}
-      <div id="donation-form" style={{ maxWidth: 1160, margin: '0 auto', padding: '60px 24px', display: 'grid', gridTemplateColumns: '1fr 380px', gap: 40, alignItems: 'start' }}>
+      <div id="donation-form" style={{ maxWidth: 1160, margin: '0 auto', padding: '60px 24px', display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(min(100%, 340px), 1fr))', gap: 40, alignItems: 'start' }}>
 
         {/* ── Zeffy Donation Form ─────────────────────────────────────── */}
         <div>
@@ -197,7 +197,7 @@ export default function AboutBuildChampions() {
           <p style={{ textAlign: 'center', color: 'rgba(255,255,255,0.60)', fontSize: 15, maxWidth: 580, margin: '0 auto 48px', lineHeight: 1.7 }}>
             We operate LitigationSpace as a nonprofit because we believe the quality of your legal tools should never determine the outcome of your case.
           </p>
-          <div style={{ display: 'grid', gridTemplateColumns: 'repeat(3, 1fr)', gap: 24, marginBottom: 48 }}>
+          <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(min(100%, 240px), 1fr))', gap: 24, marginBottom: 48 }}>
             {[
               { icon: '⚖️', title: 'A Level Playing Field', desc: 'Large, well-funded firms have always had access to the best legal technology. Build Champions exists to ensure that everyone else does too — without compromise on quality.' },
               { icon: '🌍', title: 'Global Reach', desc: 'LitigationSpace serves legal professionals and individuals across 12 countries. Your donation helps us expand jurisdiction coverage, add languages, and reach more communities.' },

@@ -904,8 +904,20 @@ def _run_full_analysis(motion_text: str, opposition_text: str, reply_text: str, 
             if isinstance(ai_data, dict) and ai_data.get("reasoning"):
                 score_reasoning[label] = ai_data["reasoning"]
 
+    # Headline metrics shown in the report (motion strength = weighted breakdown; readiness from strength + high-severity flags)
+    motion_strength_score = int(round(sum(scores[k] * SCORING_WEIGHTS[k] for k in SCORING_WEIGHTS)))
+    high_flags = sum(1 for f in risk_flags if f.get("severity") == "high")
+    if motion_strength_score >= 80 and high_flags == 0:
+        court_readiness = "high"
+    elif motion_strength_score >= 60 and high_flags <= 1:
+        court_readiness = "medium"
+    else:
+        court_readiness = "low"
+
     result = {
         "win_probability": win_probability,
+        "motion_strength_score": motion_strength_score,
+        "court_readiness": court_readiness,
         "confidence": confidence,
         "score_breakdown": {
             "legal_standard_alignment": legal_standard_score,
@@ -970,6 +982,8 @@ def _gate_results(result: dict, job_id: str, share_slug: str, anon_token: str) -
         "authenticated": False,
         "full_access": False,
         "win_probability": result["win_probability"],
+        "motion_strength_score": result.get("motion_strength_score", 0),
+        "court_readiness": result.get("court_readiness", "low"),
         "confidence": result["confidence"],
         "score_breakdown": result["score_breakdown"],
         "score_reasoning": result.get("score_reasoning", {}),

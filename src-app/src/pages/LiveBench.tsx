@@ -339,7 +339,6 @@ function BookingModal({ profile, onClose, onBooked }: { profile: Profile; onClos
             <h2 style={{ margin: 0, fontSize: 17, fontWeight: 900, color: T1 }}>Send Task Request</h2>
             <p style={{ margin: '3px 0 0', fontSize: 12, color: T3 }}>
               to <span style={{ color: ACCENT }}>{profile.name}</span> · {profile.role}
-              <span style={{ marginLeft: 8, color: T3 }}>${profile.rate}/hr</span>
             </p>
           </div>
           <button onClick={onClose} style={{ background: 'none', border: 'none', color: T3, fontSize: 20, cursor: 'pointer' }}>✕</button>
@@ -521,9 +520,8 @@ function ProfileCard({ profile, onHire, onDM }: { profile: Profile; onHire: () =
             <Stars n={profile.rating} />
           </div>
 
-          {/* Rate */}
+          {/* Status */}
           <div style={{ textAlign: 'right', flexShrink: 0 }}>
-            <div style={{ fontSize: 18, fontWeight: 900, color: T1 }}>${profile.rate}<span style={{ fontSize: 11, color: T3, fontWeight: 400 }}>/hr</span></div>
             <div style={{ fontSize: 10, color: GREEN, fontWeight: 700, marginTop: 2 }}>● Remote</div>
           </div>
         </div>
@@ -590,7 +588,6 @@ function ProfileCard({ profile, onHire, onDM }: { profile: Profile; onHire: () =
       {expanded && (
         <div style={{ padding: '14px 20px 18px', borderTop: `1px solid ${BD}`, background: SURFACE }}>
           <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: 12, fontSize: 12 }}>
-            <div><span style={{ color: T3 }}>Hourly Rate:</span> <span style={{ color: T1, fontWeight: 600 }}>${profile.rate}/hr</span></div>
             <div><span style={{ color: T3 }}>Available:</span> <span style={{ color: GREEN, fontWeight: 600 }}>Immediately</span></div>
             <div><span style={{ color: T3 }}>Min Booking:</span> <span style={{ color: T1 }}>30 minutes</span></div>
             <div><span style={{ color: T3 }}>Delivery:</span> <span style={{ color: T1 }}>Remote — negotiated</span></div>
@@ -822,7 +819,7 @@ export default function LiveBench() {
             and receive your deliverable. Payment is released only after you approve the work.
           </p>
           <div style={{ display: 'flex', flexWrap: 'wrap', gap: 10, fontSize: 12, color: T3 }}>
-            {['✓ Remote-first delivery', '✓ Negotiate scope & timeline', '✓ Payment held until you approve', '✓ Jurisdiction expertise included', '✓ Rate-based pricing from $75/hr'].map(f => (
+            {['✓ Remote-first delivery', '✓ Negotiate scope & timeline', '✓ Payment held until you approve', '✓ Jurisdiction expertise included'].map(f => (
               <span key={f} style={{ background: `${BD}`, padding: '5px 12px', borderRadius: 20, border: `1px solid ${BD}` }}>{f}</span>
             ))}
           </div>
@@ -859,14 +856,6 @@ export default function LiveBench() {
 
           {/* Advanced filters */}
           <div style={{ display: 'flex', flexWrap: 'wrap', gap: 12, alignItems: 'center' }}>
-            <div style={{ display: 'flex', alignItems: 'center', gap: 6 }}>
-              <span style={{ fontSize: 12, color: T3 }}>Rate:</span>
-              <input type="number" min="0" placeholder="Min $" value={minRate} onChange={e => { setMinRate(e.target.value); setPage(1) }}
-                style={{ width: 80, padding: '5px 9px', borderRadius: 7, border: `1px solid ${BD2}`, background: CARD, color: T1, fontSize: 12, outline: 'none' }} />
-              <span style={{ color: T3, fontSize: 12 }}>—</span>
-              <input type="number" min="0" placeholder="Max $" value={maxRate} onChange={e => { setMaxRate(e.target.value); setPage(1) }}
-                style={{ width: 80, padding: '5px 9px', borderRadius: 7, border: `1px solid ${BD2}`, background: CARD, color: T1, fontSize: 12, outline: 'none' }} />
-            </div>
             <div style={{ display: 'flex', gap: 6 }}>
               {[{ label: '🟢 Available Now', v: 'now' }, { label: '⚡ Accepts Negotiation', v: 'negotiable' }, { label: '📍 Remote Only', v: 'remote' }].map(f => (
                 <button key={f.v} onClick={() => {}}

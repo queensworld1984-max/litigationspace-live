@@ -13,7 +13,7 @@ const TOP_LINKS = [
   { href: '/cases',          label: 'Case Vault',     requiresAuth: false },
   { href: '/warroom',        label: 'War Room',       requiresAuth: true  },
   { href: '/drafting',       label: 'Drafting Engine',requiresAuth: true  },
-  { href: '/live-bench',     label: 'Live Bench',     requiresAuth: false },
+  { href: '/live-bench',     label: 'Live Bench',     requiresAuth: true  },
 ]
 
 const TOOLS_DROPDOWN = [
@@ -275,6 +275,12 @@ export default function Navbar() {
                 Pricing
               </Link>
 
+              <Link to="/donate" style={pillStyle(isActive('/donate'))}
+                onMouseEnter={e => hover.enter(e, isActive('/donate'))}
+                onMouseLeave={e => hover.leave(e, isActive('/donate'))}>
+                Donate
+              </Link>
+
               <Link to="/blog" style={pillStyle(isActive('/blog'))}
                 onMouseEnter={e => hover.enter(e, isActive('/blog'))}
                 onMouseLeave={e => hover.leave(e, isActive('/blog'))}>
@@ -298,7 +304,7 @@ export default function Navbar() {
                   <Link to="/register" style={{
                     background: '#F5A623', color: '#000', textDecoration: 'none',
                     fontSize: '.82rem', fontWeight: 700, padding: '.45rem 1.1rem', borderRadius: 9999,
-                  }}>Get Started Free</Link>
+                  }}>Join Free</Link>
                 </>
               )}
             </div>
@@ -336,6 +342,7 @@ export default function Navbar() {
 
             <MobileSectionLabel>More</MobileSectionLabel>
             <MobileLink href="/pricing" label="Pricing" active={isActive('/pricing')} />
+            <MobileLink href="/donate"  label="Donate"  active={isActive('/donate')} />
             <MobileLink href="/blog"    label="Blog"    active={isActive('/blog')} />
 
             <div style={{ marginTop: 14, paddingTop: 14, borderTop: '1px solid #f0f0f0', display: 'flex', flexDirection: 'column', gap: 8 }}>
@@ -344,7 +351,7 @@ export default function Navbar() {
               ) : (
                 <>
                   <Link to="/login"    style={{ color: '#1a1a1a', textDecoration: 'none', fontWeight: 600, fontSize: '.9rem', textAlign: 'center', padding: '11px', borderRadius: 12, border: '1.5px solid #e5e7eb' }}>Sign In</Link>
-                  <Link to="/register" style={{ background: '#F5A623', color: '#000', textDecoration: 'none', fontWeight: 700, fontSize: '.9rem', textAlign: 'center', padding: '12px', borderRadius: 12 }}>Get Started Free</Link>
+                  <Link to="/register" style={{ background: '#F5A623', color: '#000', textDecoration: 'none', fontWeight: 700, fontSize: '.9rem', textAlign: 'center', padding: '12px', borderRadius: 12 }}>Join Free</Link>
                 </>
               )}
             </div>

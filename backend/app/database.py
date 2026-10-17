@@ -963,6 +963,9 @@ def init_db():
         # Migrate documents table to add formatted HTML for review
         _migrate_documents_content_html(db)
 
+        # Migrate documents — persist "Not Duplicate" resolutions across scans
+        _migrate_documents_dup_not_duplicate(db)
+
         # Migrate blog_articles table to add status column (used by Growth OS cron/admin)
         _migrate_blog_articles_status(db)
 
@@ -2526,6 +2529,20 @@ def _migrate_documents_content_html(db):
         print(f"[MIGRATION WARNING] documents content_html: {e}")
 
 
+def _migrate_documents_dup_not_duplicate(db):
+    """Persist user 'Not Duplicate' resolutions so future scans never re-flag the doc."""
+    try:
+        cols = {c["name"] for c in db.execute("PRAGMA table_info(documents)").fetchall()}
+        if "dup_not_duplicate" not in cols:
+            db.execute("ALTER TABLE documents ADD COLUMN dup_not_duplicate INTEGER DEFAULT 0")
+            print("[MIGRATION] Added dup_not_duplicate column to documents table")
+        if "dup_resolved_at" not in cols:
+            db.execute("ALTER TABLE documents ADD COLUMN dup_resolved_at TIMESTAMP")
+            print("[MIGRATION] Added dup_resolved_at column to documents table")
+    except Exception as e:
+        print(f"[MIGRATION WARNING] documents dup_not_duplicate: {e}")
+
+
 def _migrate_blog_articles_status(db):
     """Add status column to blog_articles table if it doesn't exist.
 
@@ -2697,6 +2714,29 @@ def _migrate_growth_website_id(db):
                 db.execute(f"UPDATE {table} SET website_id = 'ls' WHERE website_id IS NULL")
         except Exception as e:
             print(f"[MIGRATION WARNING] growth website_id ({table}): {e}")
+
+
+def _migrate_growth_video_link(db):
+    """Add feature_key + video_id to blog_articles and social_posts.
+
+    feature_key records which platform feature (motion_analyzer, drafting, ...)
+    a post/article is about, so the daily blog/social crons can rotate evenly
+    across every feature instead of clustering on one. video_id points at
+    product_demo_videos.id — the matching screen-recording (product tour)
+    generated to accompany that post. Both nullable; safe to run repeatedly.
+    """
+    tables = ["blog_articles", "social_posts"]
+    for table in tables:
+        try:
+            cols = {row["name"] for row in db.execute(f"PRAGMA table_info({table})").fetchall()}
+            if "feature_key" not in cols:
+                db.execute(f"ALTER TABLE {table} ADD COLUMN feature_key TEXT")
+                print(f"[MIGRATION] Added feature_key column to {table}")
+            if "video_id" not in cols:
+                db.execute(f"ALTER TABLE {table} ADD COLUMN video_id TEXT")
+                print(f"[MIGRATION] Added video_id column to {table}")
+        except Exception as e:
+            print(f"[MIGRATION WARNING] growth video_link ({table}): {e}")
 
 
 def _seed_court_rules(db):

@@ -1,3 +1,4 @@
+import app.utils.openai_compat  # noqa: F401  (fix rejected OpenAI params for newer models; must load first)
 from fastapi import FastAPI, Request
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import JSONResponse
@@ -7,7 +8,7 @@ import asyncio
 import jwt
 from datetime import datetime, timezone
 
-from app.database import init_db, get_db, _migrate_cases_exhibit_numbering, _migrate_growth_website_id
+from app.database import init_db, get_db, _migrate_cases_exhibit_numbering, _migrate_growth_website_id, _migrate_growth_video_link
 from app.utils.trial_emails import run_trial_notifications
 from app.routers import auth, experts, cases, documents, warroom, notifications, uscis, workflows, features, drafting, judicial, motion_analyzer, growth, legal_brain, jurisdiction, admin_analytics, signatures, outreach, tracking
 from app.routers import contact as contact_router
@@ -26,6 +27,7 @@ async def lifespan(app: FastAPI):
     with get_db() as db:
         _migrate_cases_exhibit_numbering(db)
         _migrate_growth_website_id(db)  # Phase 1: multi-site website_id columns
+        _migrate_growth_video_link(db)  # feature_key + video_id on blog_articles/social_posts
     legal_brain.init_legal_brain_tables()
     jurisdiction.init_jurisdiction_tables()
     _seed_growth_data()
@@ -140,6 +142,11 @@ async def enforce_internal_dashboard_access(request: Request, call_next):
     elif path.startswith("/api/admin/analytics/"):
         needs_check = True
     elif path.startswith("/api/support/admin/"):
+        needs_check = True
+    # Support transcripts and knowledge-base management are admin-only
+    elif path.startswith("/api/support/sessions") or path.startswith("/api/support/knowledge"):
+        needs_check = True
+    elif path == "/api/tracking/stats":
         needs_check = True
 
     if not needs_check:

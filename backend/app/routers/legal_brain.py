@@ -131,6 +131,16 @@ CREATE TABLE IF NOT EXISTS ai_generated_drafts (
     status TEXT DEFAULT 'generated' CHECK(status IN ('generated', 'editing', 'finalized')),
     created_at TEXT NOT NULL
 );
+
+CREATE TABLE IF NOT EXISTS document_analysis_conversations (
+    id TEXT PRIMARY KEY,
+    user_id TEXT,
+    document_type TEXT DEFAULT '',
+    analysis_type TEXT DEFAULT '',
+    document_text TEXT DEFAULT '',
+    analysis_text TEXT DEFAULT '',
+    created_at TEXT NOT NULL
+);
 """
 
 

@@ -854,6 +854,249 @@ function ContentPanel({ site }: { site: SiteId }) {
       <div style={{ marginTop: 40 }}>
         <MarketingVideosSection site={site} />
       </div>
+      <div style={{ marginTop: 40 }}>
+        <ProductToursSection site={site} />
+      </div>
+    </div>
+  )
+}
+
+// ── Product Tours (green arrow pointer + Adam VO) ────────────────────────────
+
+type ProductTourVideo = {
+  id: string
+  product_key: string
+  title: string
+  duration_seconds: number
+  file_size_bytes: number
+  voice?: string
+  pointer_style?: string
+  status: string
+  created_at: string
+}
+
+type ProductTourCatalogItem = {
+  product_key: string
+  title: string
+  path: string
+  steps: number
+}
+
+function ProductToursSection({ site }: { site: SiteId }) {
+  const accent = GREEN
+  const [videos, setVideos] = useState<ProductTourVideo[]>([])
+  const [catalog, setCatalog] = useState<ProductTourCatalogItem[]>([])
+  const [loading, setLoading] = useState(true)
+  const [generating, setGenerating] = useState<string | null>(null)
+  const [toast, setToast] = useState('')
+  const [playing, setPlaying] = useState<string | null>(null)
+  const [playUrl, setPlayUrl] = useState<string | null>(null)
+
+  const load = useCallback(() => {
+    Promise.all([
+      growthAPI.getProductTours({ site, limit: 50 }),
+      growthAPI.getProductTourCatalog(),
+    ]).then(([v, c]) => {
+      setVideos((v.data as { items?: ProductTourVideo[] }).items ?? [])
+      setCatalog((c.data as { items?: ProductTourCatalogItem[] }).items ?? [])
+      setLoading(false)
+    }).catch(() => setLoading(false))
+  }, [site])
+
+  useEffect(() => { load() }, [load])
+
+  useEffect(() => {
+    return () => {
+      if (playUrl) window.URL.revokeObjectURL(playUrl)
+    }
+  }, [playUrl])
+
+  const handleGenerateOne = async (product_key: string) => {
+    setGenerating(product_key)
+    setToast('')
+    try {
+      const r = await growthAPI.generateProductTour(product_key, site)
+      const title = (r.data as { title?: string }).title || product_key
+      setToast(`Generated tour: ${title} (green arrow pointer + Adam VO)`)
+      load()
+    } catch (e) {
+      const err = e as { response?: { data?: { detail?: string } } }
+      setToast(err.response?.data?.detail || 'Tour generation failed.')
+    }
+    setGenerating(null)
+  }
+
+  const handleGenerateAll = async () => {
+    setGenerating('__all__')
+    setToast('Generating all product tours — this may take several minutes…')
+    try {
+      const r = await growthAPI.generateAllProductTours(site)
+      const data = r.data as { generated?: number; total?: number }
+      setToast(`Done: ${data.generated ?? 0}/${data.total ?? 0} tours generated.`)
+      load()
+    } catch (e) {
+      const err = e as { response?: { data?: { detail?: string } } }
+      setToast(err.response?.data?.detail || 'Batch generation failed.')
+    }
+    setGenerating(null)
+  }
+
+  const openPlay = async (id: string) => {
+    if (playing === id) {
+      setPlaying(null)
+      if (playUrl) {
+        window.URL.revokeObjectURL(playUrl)
+        setPlayUrl(null)
+      }
+      return
+    }
+    setPlaying(id)
+    try {
+      const r = await api.get(growthAPI.productTourStreamUrl(id), { responseType: 'blob' })
+      if (playUrl) window.URL.revokeObjectURL(playUrl)
+      setPlayUrl(window.URL.createObjectURL(new Blob([r.data as BlobPart], { type: 'video/mp4' })))
+    } catch {
+      setToast('Playback failed — re-login as admin and try again.')
+      setPlaying(null)
+    }
+  }
+
+  return (
+    <div>
+      <div style={{ display: 'flex', alignItems: 'flex-start', justifyContent: 'space-between', marginBottom: 16, gap: 12, flexWrap: 'wrap' }}>
+        <div>
+          <div style={{ fontSize: 16, fontWeight: 700, color: TEXT, marginBottom: 4 }}>Product Tours</div>
+          <div style={{ fontSize: 13, color: MUTED, maxWidth: 560, lineHeight: 1.45 }}>
+            Screen-style product demos with a <span style={{ color: GREEN, fontWeight: 700 }}>green arrow pointer</span> and
+            ElevenLabs <strong style={{ color: TEXT }}>Adam</strong> voice-over. Saved in Admin for marketing and QA.
+          </div>
+        </div>
+        <Btn
+          label={generating === '__all__' ? 'Generating all…' : 'Generate all tours'}
+          color={accent}
+          onClick={handleGenerateAll}
+          disabled={!!generating}
+        />
+      </div>
+
+      {toast && (
+        <div style={{ background: PANEL2, border: `1px solid ${BD}`, borderRadius: 8, padding: '10px 16px', fontSize: 13, color: TEXT, marginBottom: 16 }}>
+          {toast}
+        </div>
+      )}
+
+      <div style={{ fontSize: 12, fontWeight: 700, color: MUTED, textTransform: 'uppercase', letterSpacing: '0.06em', marginBottom: 10 }}>
+        Catalog — generate one
+      </div>
+      <div style={{ display: 'flex', flexWrap: 'wrap', gap: 8, marginBottom: 24 }}>
+        {catalog.map(c => (
+          <button
+            key={c.product_key}
+            type="button"
+            disabled={!!generating}
+            onClick={() => handleGenerateOne(c.product_key)}
+            style={{
+              padding: '8px 12px', borderRadius: 8, cursor: generating ? 'wait' : 'pointer',
+              border: `1px solid ${BD}`, background: PANEL2, color: TEXT, fontSize: 12, fontWeight: 600,
+            }}
+            title={c.path}
+          >
+            {generating === c.product_key ? '…' : '▶'} {c.title}
+            <span style={{ color: DIM, marginLeft: 6 }}>({c.steps} steps)</span>
+          </button>
+        ))}
+        {!catalog.length && !loading && (
+          <span style={{ fontSize: 13, color: DIM }}>Catalog loads after backend deploy…</span>
+        )}
+      </div>
+
+      <div style={{ fontSize: 12, fontWeight: 700, color: MUTED, textTransform: 'uppercase', letterSpacing: '0.06em', marginBottom: 10 }}>
+        Generated tours
+      </div>
+      {loading ? <LoadRow label="product tours" /> : videos.length === 0 ? (
+        <EmptyRow label="product tours — generate one above" />
+      ) : (
+        <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fill, minmax(280px, 1fr))', gap: 16 }}>
+          {videos.map(v => (
+            <div key={v.id} style={{ background: PANEL2, border: `1px solid ${BD}`, borderRadius: 10, overflow: 'hidden' }}>
+              <div style={{ position: 'relative', background: BG, aspectRatio: '16 / 9' }}>
+                <img
+                  src={growthAPI.productTourThumbnailUrl(v.id)}
+                  alt={v.title}
+                  style={{ width: '100%', height: '100%', objectFit: 'cover', display: 'block' }}
+                  onError={e => { (e.target as HTMLImageElement).style.display = 'none' }}
+                />
+                <span style={{
+                  position: 'absolute', top: 8, left: 8, fontSize: 10, fontWeight: 800,
+                  background: 'rgba(34,197,94,0.9)', color: '#052e16', padding: '2px 8px', borderRadius: 4,
+                }}>GREEN ARROW</span>
+              </div>
+              <div style={{ padding: '12px 14px' }}>
+                <div style={{ fontSize: 13, fontWeight: 700, color: TEXT, marginBottom: 4 }}>{v.title}</div>
+                <div style={{ fontSize: 11, color: DIM, marginBottom: 10 }}>
+                  {formatDuration(v.duration_seconds)} · {formatBytes(v.file_size_bytes)} · {v.voice || 'adam'} · {v.created_at?.slice(0, 10)}
+                </div>
+                {playing === v.id && playUrl ? (
+                  <video
+                    controls
+                    autoPlay
+                    style={{ width: '100%', borderRadius: 8, marginBottom: 8, background: '#000' }}
+                    src={playUrl}
+                  />
+                ) : null}
+                <div style={{ display: 'flex', gap: 8, flexWrap: 'wrap' }}>
+                  <button
+                    type="button"
+                    onClick={() => openPlay(v.id)}
+                    style={{
+                      padding: '6px 12px', borderRadius: 6, border: 'none',
+                      background: GREEN, color: '#052e16', fontWeight: 800, fontSize: 12, cursor: 'pointer',
+                    }}
+                  >{playing === v.id ? 'Hide' : 'Play'}</button>
+                  <a
+                    href="#"
+                    onClick={async e => {
+                      e.preventDefault()
+                      e.stopPropagation()
+                      try {
+                        const r = await api.get(growthAPI.productTourDownloadUrl(v.id), {
+                          responseType: 'blob',
+                          timeout: 120000,
+                        })
+                        // Guard against API returning JSON error as a "blob"
+                        const blob = r.data as Blob
+                        if (blob.type && blob.type.includes('application/json')) {
+                          const text = await blob.text()
+                          throw new Error(text.slice(0, 200) || 'Server returned JSON error')
+                        }
+                        const url = window.URL.createObjectURL(
+                          new Blob([blob], { type: 'video/mp4' })
+                        )
+                        const a = document.createElement('a')
+                        a.href = url
+                        a.download = `${(v.title || 'product_tour').replace(/[^\w\-]+/g, '_')}.mp4`
+                        document.body.appendChild(a)
+                        a.click()
+                        a.remove()
+                        window.URL.revokeObjectURL(url)
+                        setToast(`Downloaded: ${v.title}`)
+                      } catch (err) {
+                        const msg = err instanceof Error ? err.message : 'Download failed'
+                        setToast(`Download failed: ${msg}`)
+                      }
+                    }}
+                    style={{
+                      padding: '6px 12px', borderRadius: 6, border: `1px solid ${BD}`,
+                      color: TEXT, fontWeight: 600, fontSize: 12, textDecoration: 'none',
+                      cursor: 'pointer',
+                    }}
+                  >Download</a>
+                </div>
+              </div>
+            </div>
+          ))}
+        </div>
+      )}
     </div>
   )
 }

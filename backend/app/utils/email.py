@@ -177,6 +177,95 @@ def send_document_review_email(to_email: str, reviewer_name: str, sender_name: s
     return _send_email(to_email, subject, html)[0]
 
 
+def send_review_received_sender_email(
+    to_email: str,
+    sender_name: str,
+    reviewer_name: str,
+    doc_filename: str,
+    action: str,
+    comment: str = "",
+    case_url: str = "",
+    page_number: int = None,
+) -> bool:
+    """Default notification to the document owner when a client submits a review.
+
+    Always sent on public share-link review submit (comment / approve / reject /
+    request_changes) so the firm knows activity happened without logging in first.
+    """
+    action_labels = {
+        "comment": "left a comment",
+        "approve": "approved the document",
+        "reject": "rejected the document",
+        "request_changes": "requested changes",
+    }
+    action_key = (action or "comment").strip().lower()
+    action_label = action_labels.get(action_key, "submitted a review")
+    action_colors = {
+        "approve": ("#166534", "#f0fdf4", "#86efac"),
+        "reject": ("#991b1b", "#fef2f2", "#fca5a5"),
+        "request_changes": ("#92400e", "#fffbeb", "#fcd34d"),
+        "comment": ("#1e40af", "#eff6ff", "#93c5fd"),
+    }
+    title_color, box_bg, box_border = action_colors.get(action_key, action_colors["comment"])
+
+    safe_reviewer = html_escape.escape(reviewer_name or "A reviewer")
+    safe_sender = html_escape.escape(sender_name or "there")
+    safe_file = html_escape.escape(doc_filename or "Document")
+    safe_comment = html_escape.escape(comment or "").replace("\n", "<br>\n")
+    page_bit = f" (page {int(page_number)})" if page_number else ""
+
+    comment_block = ""
+    if safe_comment:
+        comment_block = f"""
+            <div style="background: #f8fafc; border: 1px solid #e2e8f0; border-radius: 8px; padding: 14px 16px; margin: 16px 0;">
+                <p style="color: #64748b; font-size: 12px; font-weight: 700; margin: 0 0 6px; text-transform: uppercase; letter-spacing: 0.04em;">Comment{page_bit}</p>
+                <p style="color: #334155; font-size: 14px; line-height: 1.55; margin: 0;">{safe_comment}</p>
+            </div>
+        """
+    else:
+        comment_block = f"""
+            <p style="color: #94a3b8; font-size: 13px; font-style: italic;">No written comment was included.</p>
+        """
+
+    cta = ""
+    if case_url:
+        cta = f"""
+            <div style="text-align: center; margin: 28px 0 8px;">
+                <a href="{html_escape.escape(case_url)}" style="display: inline-block; background: linear-gradient(135deg, #F5A623, #d97706); color: #111; text-decoration: none; padding: 12px 28px; border-radius: 8px; font-weight: 700; font-size: 15px;">Open in LitigationSpace</a>
+            </div>
+        """
+
+    subject = f"Review received: {reviewer_name or 'Someone'} {action_label} — {doc_filename or 'document'}"
+    html = f"""
+    <div style="font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif; max-width: 600px; margin: 0 auto; padding: 40px 20px;">
+        <div style="text-align: center; margin-bottom: 30px;">
+            <img src="https://litigationspace.com/logo.png" alt="LitigationSpace" style="height: 36px; display: inline-block;" />
+            <p style="color: #64748b; font-size: 14px; margin-top: 4px;">Document Review Notification</p>
+        </div>
+        <div style="background: {box_bg}; border: 1px solid {box_border}; border-radius: 12px; padding: 32px;">
+            <h2 style="color: {title_color}; font-size: 20px; margin-top: 0;">New review on your document</h2>
+            <p style="color: #475569; line-height: 1.6;">Hi {safe_sender},</p>
+            <p style="color: #475569; line-height: 1.6;">
+                <strong>{safe_reviewer}</strong> {action_label} on
+                <strong>{safe_file}</strong>.
+            </p>
+            <div style="background: #ffffff; border: 1px solid {box_border}; border-radius: 8px; padding: 14px 16px; margin: 18px 0;">
+                <p style="margin: 0; color: #334155; font-size: 14px;"><strong>Reviewer:</strong> {safe_reviewer}</p>
+                <p style="margin: 6px 0 0; color: #334155; font-size: 14px;"><strong>Action:</strong> {html_escape.escape(action_label)}</p>
+                <p style="margin: 6px 0 0; color: #334155; font-size: 14px;"><strong>Document:</strong> {safe_file}</p>
+            </div>
+            {comment_block}
+            {cta}
+            <p style="color: #94a3b8; font-size: 13px; margin-top: 20px;">
+                This is an automatic notification whenever someone submits a review on a document you shared.
+            </p>
+        </div>
+        <p style="color: #94a3b8; font-size: 12px; text-align: center; margin-top: 20px;">&copy; 2026 LitigationSpace. All rights reserved.</p>
+    </div>
+    """
+    return _send_email(to_email, subject, html)[0]
+
+
 def send_reviewer_update_email(to_email: str, reviewer_name: str, sender_name: str,
                                 doc_filename: str, review_url: str, message: str) -> bool:
     """Send email notifying reviewer that a document has been updated and is ready for re-review."""

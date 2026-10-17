@@ -138,25 +138,54 @@ Rules:
     return data
 
 
-def _generate_voiceover(client, text: str, out_path: Path) -> float:
-    """Generate TTS audio for a slide, return duration in seconds."""
-    response = client.audio.speech.create(
-        model="tts-1",
-        voice="onyx",
-        input=text,
-    )
-    response.stream_to_file(str(out_path))
-
-    # Get duration via ffprobe
+def _audio_duration_seconds(path: Path) -> float:
+    """Return media duration via ffprobe, or a safe default."""
     result = subprocess.run(
         ["ffprobe", "-v", "error", "-show_entries", "format=duration",
-         "-of", "default=noprint_wrappers=1:nokeys=1", str(out_path)],
+         "-of", "default=noprint_wrappers=1:nokeys=1", str(path)],
         capture_output=True, text=True,
     )
     try:
         return float(result.stdout.strip())
     except ValueError:
         return 4.0
+
+
+def _generate_voiceover_elevenlabs(text: str, out_path: Path) -> float:
+    """ElevenLabs TTS — default voice Adam. Returns duration seconds."""
+    from app.services.tts_elevenlabs import synthesize_speech
+    return synthesize_speech(text, out_path)
+
+
+def _generate_voiceover_openai(client, text: str, out_path: Path) -> float:
+    """Fallback OpenAI TTS (onyx)."""
+    response = client.audio.speech.create(
+        model="tts-1",
+        voice="onyx",
+        input=text,
+    )
+    response.stream_to_file(str(out_path))
+    return _audio_duration_seconds(out_path)
+
+
+def _generate_voiceover(client, text: str, out_path: Path) -> float:
+    """Generate TTS audio for a slide, return duration in seconds.
+
+    Prefers ElevenLabs Adam when ELEVENLABS_API_KEY is set; falls back to OpenAI onyx.
+    """
+    if (os.environ.get("ELEVENLABS_API_KEY") or "").strip():
+        try:
+            dur = _generate_voiceover_elevenlabs(text, out_path)
+            logger.info(f"Voiceover (ElevenLabs Adam): {out_path.name} ({dur:.1f}s)")
+            return dur
+        except Exception as e:
+            logger.warning(f"ElevenLabs TTS failed, falling back to OpenAI: {e}")
+
+    if client is None:
+        raise RuntimeError("No TTS available (ElevenLabs failed and OpenAI client missing)")
+    dur = _generate_voiceover_openai(client, text, out_path)
+    logger.info(f"Voiceover (OpenAI onyx): {out_path.name} ({dur:.1f}s)")
+    return dur
 
 
 def _render_slide_image(heading: str, body: str, slide_num: int, total: int, out_path: Path):

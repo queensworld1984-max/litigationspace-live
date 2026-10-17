@@ -435,8 +435,23 @@ export const growthAPI = {
   getVideos:        (params?: Record<string, unknown>)  => api.get('/growth/videos', { params }),
   generateVideo:    (site: string = 'ls')               => api.post('/growth/videos/generate', null, { params: { site } }),
   publishVideo:     (videoId: string, platforms: string)=> api.post(`/growth/videos/${videoId}/publish`, null, { params: { platforms } }),
-  videoDownloadUrl: (videoId: string)                   => `/api/growth/videos/${videoId}/download`,
+  // Paths for axios (baseURL already is /api) — do NOT prefix with /api again
+  videoDownloadUrl: (videoId: string)                   => `/growth/videos/${videoId}/download`,
+  // Absolute browser paths for <img src> (no axios)
   videoThumbnailUrl:(videoId: string)                   => `/api/growth/videos/${videoId}/thumbnail`,
+
+  // Product tours (green arrow pointer + Adam VO)
+  getProductTourCatalog: () => api.get('/growth/product-tours/catalog'),
+  getProductTours: (params?: Record<string, unknown>) => api.get('/growth/product-tours', { params }),
+  generateProductTour: (product_key: string, site: string = 'ls') =>
+    api.post('/growth/product-tours/generate', null, { params: { product_key, site }, timeout: 300000 }),
+  generateAllProductTours: (site: string = 'ls') =>
+    api.post('/growth/product-tours/generate-all', null, { params: { site }, timeout: 900000 }),
+  // axios paths (baseURL=/api)
+  productTourDownloadUrl: (videoId: string) => `/growth/product-tours/${videoId}/download`,
+  productTourStreamUrl: (videoId: string) => `/growth/product-tours/${videoId}/stream`,
+  // browser <img src>
+  productTourThumbnailUrl: (videoId: string) => `/api/growth/product-tours/${videoId}/thumbnail`,
 }
 
 // ─── Admin Analytics (Admin) ─────────────────────────────────────────────────

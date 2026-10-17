@@ -517,6 +517,24 @@ async def public_expert_prospects(limit: int = 12):
     return {"items": [dict(r) for r in rows], "total": total}
 
 
+@router.get("/public/platform-stats")
+async def public_platform_stats():
+    """Public endpoint: real usage counts for the homepage live-stat counter."""
+    with get_db() as db:
+        motions_analyzed    = db.execute("SELECT COUNT(*) as cnt FROM motion_analysis_jobs WHERE status = 'done'").fetchone()["cnt"]
+        documents_analyzed  = db.execute("SELECT COUNT(*) as cnt FROM document_analysis_conversations").fetchone()["cnt"]
+        cases_managed       = db.execute("SELECT COUNT(*) as cnt FROM cases").fetchone()["cnt"]
+        legal_brain_answers = db.execute("SELECT COUNT(*) as cnt FROM legal_brain_messages WHERE role = 'assistant'").fetchone()["cnt"]
+        billing_minutes     = db.execute("SELECT COALESCE(SUM(duration_minutes),0) as mins FROM billing_time_entries").fetchone()["mins"]
+    return {
+        "motions_analyzed": motions_analyzed,
+        "documents_analyzed": documents_analyzed,
+        "cases_managed": cases_managed,
+        "legal_brain_answers": legal_brain_answers,
+        "billing_hours_tracked": round(billing_minutes / 60, 1),
+    }
+
+
 @router.get("/prospects/public/stats")
 async def public_prospect_stats():
     """Public endpoint: return aggregate prospect stats for homepage."""
@@ -1845,6 +1863,263 @@ async def run_ai_lead_discovery():
         return {"status": "error", "error": str(e)}
 
 
+# ================================================================
+# FEATURE CATALOG — every marketable LitigationSpace feature.
+# Used by run_ai_blog_generation / run_ai_social_generation to rotate
+# coverage evenly across the whole product instead of clustering on one
+# feature, and to attach a matching screen-recording (product_demo_videos,
+# from product_tour_generator) to each post. product_key must match a
+# product_key in app.services.product_tour_generator.TOURS.
+# ================================================================
+FEATURE_CATALOG = [
+    {
+        "product_key": "motion_analyzer",
+        "path": "/motion-analyzer",
+        "blog_topics": [
+            ("How AI is Changing Motion Practice in 2026", "general", "AI legal technology, motion analysis AI, legal AI tools"),
+            ("5 Evidence Rules Every Litigator Must Know for Motions", "general", "evidence rules motions, FRE litigation, evidence objections"),
+            ("Motion for Sanctions Under Rule 11: When and How to File", "general", "Rule 11 sanctions, frivolous litigation, attorney sanctions"),
+        ],
+        "social_topics": [
+            "motion analysis tips for litigation attorneys",
+            "how to evaluate win probability for your case",
+        ],
+    },
+    {
+        "product_key": "drafting",
+        "path": "/drafting",
+        "blog_topics": [
+            ("How to Draft an Effective Motion in Limine", "general", "motion in limine tips, MIL drafting, exclude evidence"),
+            ("Motion to Dismiss Under FRCP 12(b)(6): Complete Guide", "general", "motion to dismiss, 12b6, failure to state a claim"),
+            ("How to Win a Motion for Preliminary Injunction", "general", "preliminary injunction, TRO, injunctive relief motion"),
+            ("How to Draft Effective Pretrial Motions", "general", "pretrial motions, motion practice, litigation preparation"),
+            ("Anti-SLAPP Motions: Protecting Free Speech in Litigation", "general", "anti-SLAPP, free speech, strategic lawsuit, motion to strike"),
+        ],
+        "social_topics": [
+            "how to strengthen your motion to dismiss",
+            "drafting motions and briefs faster with AI",
+        ],
+    },
+    {
+        "product_key": "doc_analyzer",
+        "path": "/document-analyzer",
+        "blog_topics": [
+            ("Discovery Abuse: How to File a Successful Motion to Compel", "general", "motion to compel, discovery abuse, FRCP 37"),
+            ("E-Discovery Best Practices for Modern Litigation", "general", "e-discovery, ESI, electronic discovery, litigation technology"),
+            ("Litigation Hold Letters: Preserving Evidence Early", "general", "litigation hold, evidence preservation, spoliation sanctions"),
+        ],
+        "social_topics": [
+            "extracting key facts from documents automatically",
+            "common mistakes in motions for summary judgment",
+        ],
+    },
+    {
+        "product_key": "legal_brain",
+        "path": "/legal-brain",
+        "blog_topics": [
+            ("Daubert vs Frye: Expert Witness Admissibility Standards", "general", "Daubert standard, Frye test, expert witness motions"),
+            ("Federal Rule 56: Summary Judgment Best Practices", "jurisdictional_guide", "FRCP 56, federal summary judgment, rule 56 motion"),
+            ("Class Action Certification: Motion Practice Guide", "general", "class action, class certification, Rule 23 motion"),
+        ],
+        "social_topics": [
+            "how AI helps lawyers prepare for hearings",
+            "getting instant legal research answers with AI",
+        ],
+    },
+    {
+        "product_key": "legal_database",
+        "path": "/legal-database",
+        "blog_topics": [
+            ("Texas Rule 166a: State Summary Judgment Guide", "jurisdictional_guide", "Texas Rule 166a, Texas summary judgment, TRCP"),
+            ("Florida Rule 1.510: Summary Judgment After 2021 Amendment", "jurisdictional_guide", "Florida 1.510, FL summary judgment, Daubert standard"),
+            ("Illinois 735 ILCS 5/2-1005: Summary Judgment in Illinois", "jurisdictional_guide", "Illinois summary judgment, 735 ILCS, IL motion practice"),
+            ("New York CPLR 3212: Summary Judgment in New York", "jurisdictional_guide", "NY summary judgment, CPLR 3212, New York motion practice"),
+            ("California CCP 437c: Summary Judgment California Guide", "jurisdictional_guide", "California summary judgment, CCP 437c, CA motion practice"),
+            ("Georgia OCGA 9-11-56: Summary Judgment in Georgia", "jurisdictional_guide", "Georgia summary judgment, OCGA, GA motion practice"),
+            ("Ohio Civil Rule 56: Summary Judgment Guide", "jurisdictional_guide", "Ohio summary judgment, Ohio Civ R 56, OH motion practice"),
+            ("Pennsylvania Rule 1035.2: Summary Judgment in PA", "jurisdictional_guide", "Pennsylvania summary judgment, Pa RCP 1035, PA motion practice"),
+            ("Michigan MCR 2.116: Summary Disposition Guide", "jurisdictional_guide", "Michigan summary judgment, MCR 2.116, MI motion practice"),
+            ("New Jersey Rule 4:46: Summary Judgment in NJ", "jurisdictional_guide", "NJ summary judgment, Rule 4:46, New Jersey motion practice"),
+            ("Virginia Code 8.01-420: Summary Judgment in Virginia", "jurisdictional_guide", "Virginia summary judgment, VA motion practice"),
+            ("Colorado CRCP 56: Summary Judgment in Colorado", "jurisdictional_guide", "Colorado summary judgment, CRCP 56, CO motion practice"),
+            ("Washington CR 56: Summary Judgment in Washington", "jurisdictional_guide", "Washington summary judgment, CR 56, WA motion practice"),
+            ("Massachusetts Rule 56: Summary Judgment in MA", "jurisdictional_guide", "Massachusetts summary judgment, Mass R Civ P 56, MA motion practice"),
+            ("Arizona Rule 56: Summary Judgment in Arizona", "jurisdictional_guide", "Arizona summary judgment, Ariz R Civ P 56, AZ motion practice"),
+            ("Minnesota Rule 56: Summary Judgment in Minnesota", "jurisdictional_guide", "Minnesota summary judgment, Minn R Civ P 56, MN motion practice"),
+            ("Maryland Rule 2-501: Summary Judgment in Maryland", "jurisdictional_guide", "Maryland summary judgment, Rule 2-501, MD motion practice"),
+            ("Tennessee Rule 56: Summary Judgment in Tennessee", "jurisdictional_guide", "Tennessee summary judgment, Tenn R Civ P 56, TN motion practice"),
+            ("Indiana Trial Rule 56: Summary Judgment in Indiana", "jurisdictional_guide", "Indiana summary judgment, Trial Rule 56, IN motion practice"),
+        ],
+        "social_topics": [
+            "federal vs state motion practice differences",
+            "searching statutes and case law across jurisdictions",
+        ],
+    },
+    {
+        "product_key": "global_legal_intel",
+        "path": "/jurisdiction",
+        "blog_topics": [
+            ("Remote Hearings and Virtual Litigation Best Practices", "general", "remote hearings, virtual litigation, Zoom court, technology"),
+            ("Mediation vs Arbitration: When to File a Motion to Compel", "general", "ADR, mediation, arbitration, motion to compel arbitration"),
+            ("Appellate Motion Practice: Preserving Issues for Appeal", "general", "appellate practice, preserving error, motion for new trial"),
+        ],
+        "social_topics": [
+            "the future of legal technology in courtrooms",
+            "navigating venue and jurisdiction risk with AI",
+        ],
+    },
+    {
+        "product_key": "case_vault",
+        "path": "/cases",
+        "blog_topics": [
+            ("Effective Deposition Strategies for Litigators", "general", "deposition tips, deposition strategy, litigation discovery"),
+            ("Strategic Use of Interrogatories in Complex Litigation", "general", "interrogatories, written discovery, litigation strategy"),
+            ("Building a Winning Trial Notebook: Litigation Preparation", "general", "trial notebook, trial preparation, litigation organization"),
+        ],
+        "social_topics": [
+            "preparing for depositions with AI tools",
+            "organizing case files, evidence, and deadlines in one place",
+        ],
+    },
+    {
+        "product_key": "war_room",
+        "path": "/warroom",
+        "blog_topics": [
+            ("Attorney Fee Petitions: Maximizing Recovery Post-Judgment", "general", "attorney fees, fee petition, post-judgment motions"),
+            ("Building a Litigation Strategy Timeline: From Filing to Trial", "general", "litigation strategy, case timeline, trial strategy"),
+        ],
+        "social_topics": [
+            "why litigation firms need motion intelligence",
+            "pressure-testing your case theory before trial",
+        ],
+    },
+    {
+        "product_key": "live_bench",
+        "path": "/live-bench",
+        "blog_topics": [
+            ("Expert Witness Preparation Tips for Trial", "general", "expert witness prep, expert testimony, trial witnesses"),
+            ("How to Vet and Hire the Right Expert Witness", "general", "expert witness marketplace, hiring experts, litigation support"),
+        ],
+        "social_topics": [
+            "expert witness preparation tips",
+            "finding verified expert witnesses and paralegals on demand",
+        ],
+    },
+    {
+        "product_key": "case_builder",
+        "path": "/case-builder",
+        "blog_topics": [
+            ("Opening a New Matter the Right Way: A Case Intake Checklist", "general", "case intake, new matter checklist, litigation onboarding"),
+        ],
+        "social_topics": [
+            "starting a new matter organized from day one",
+        ],
+    },
+    {
+        "product_key": "ai_navigator",
+        "path": "/dashboard",
+        "blog_topics": [
+            ("One Dashboard, Every Tool: Running Litigation Ops Without Tab Chaos", "general", "legal practice management, litigation dashboard, legal ops"),
+        ],
+        "social_topics": [
+            "litigation workflow automation benefits",
+            "trial preparation checklist for attorneys",
+        ],
+    },
+]
+
+
+def _pick_feature(db, table: str, site: str) -> dict:
+    """Pick the least-recently-covered feature for blog/social rotation.
+
+    Mirrors video_generator._pick_topic's "least recently used" approach so
+    no single feature (e.g. Motion Analyzer) can dominate daily content —
+    every feature in FEATURE_CATALOG gets its turn before any repeats.
+    """
+    rows = db.execute(
+        f"SELECT feature_key, MAX(created_at) as last_used FROM {table} "
+        f"WHERE website_id = ? AND feature_key IS NOT NULL GROUP BY feature_key",
+        (site,)
+    ).fetchall()
+    used_map = {r["feature_key"]: r["last_used"] for r in rows}
+
+    last_row = db.execute(
+        f"SELECT feature_key FROM {table} WHERE website_id = ? AND feature_key IS NOT NULL "
+        f"ORDER BY created_at DESC LIMIT 1",
+        (site,)
+    ).fetchone()
+    last_feature = last_row["feature_key"] if last_row else None
+
+    sorted_features = sorted(FEATURE_CATALOG, key=lambda f: used_map.get(f["product_key"], ""))
+    pick = sorted_features[0]
+    if pick["product_key"] == last_feature and len(sorted_features) > 1:
+        pick = sorted_features[1]
+    return pick
+
+
+def _pick_blog_feature_and_topic(db, site: str):
+    """Pick the least-recently-covered feature AND one of its topics that hasn't
+    already been published (by slug).
+
+    Several FEATURE_CATALOG blog topics are deliberately reused from the original
+    (pre-rotation) topic list for continuity, so many already exist as published
+    articles. Without this, a feature whose entire topic list is already published
+    would keep getting picked (feature_key never advances past it) and every run
+    would just return "Article already exists" forever. This falls through to the
+    next least-recently-used feature until it finds an available topic.
+    """
+    import random as _random
+
+    rows = db.execute(
+        "SELECT feature_key, MAX(created_at) as last_used FROM blog_articles "
+        "WHERE website_id = ? AND feature_key IS NOT NULL GROUP BY feature_key",
+        (site,)
+    ).fetchall()
+    used_map = {r["feature_key"]: r["last_used"] for r in rows}
+    sorted_features = sorted(FEATURE_CATALOG, key=lambda f: used_map.get(f["product_key"], ""))
+
+    for feature in sorted_features:
+        topics = list(feature["blog_topics"])
+        _random.shuffle(topics)
+        for t in topics:
+            slug = t[0].lower().replace(" ", "-").replace(":", "").replace(",", "")[:80]
+            if not db.execute("SELECT id FROM blog_articles WHERE slug = ?", (slug,)).fetchone():
+                return feature, t
+
+    # Degenerate case: every topic for every feature already published. Reuse the
+    # least-recently-used feature anyway — the caller's existing slug-uniqueness
+    # check will just report "already exists" as it always has.
+    feature = sorted_features[0]
+    return feature, _random.choice(feature["blog_topics"])
+
+
+def _get_or_create_feature_video(db, product_key: str, site: str) -> Optional[dict]:
+    """Return an existing product-tour screen recording for this feature, or generate one.
+
+    Generated once per feature and reused after that — only the first post
+    for a given feature pays the screenshot/TTS/ffmpeg generation cost.
+    """
+    from app.services.product_tour_generator import generate_product_tour, ensure_schema
+    ensure_schema(db)
+    row = db.execute(
+        "SELECT * FROM product_demo_videos WHERE product_key = ? AND website_id = ? "
+        "ORDER BY created_at DESC LIMIT 1",
+        (product_key, site)
+    ).fetchone()
+    if row:
+        return dict(row)
+    try:
+        result = generate_product_tour(db, product_key=product_key, website_id=site)
+    except Exception as e:
+        logger.warning(f"Product tour generation failed for {product_key}: {e}")
+        return None
+    if result.get("status") != "success":
+        logger.warning(f"Product tour generation skipped for {product_key}: {result}")
+        return None
+    row = db.execute("SELECT * FROM product_demo_videos WHERE id = ?", (result["id"],)).fetchone()
+    return dict(row) if row else None
+
+
 async def run_ai_blog_generation(site: str = "ls"):
     """Cron job: Auto-generate a blog article using OpenAI.
 
@@ -1911,53 +2186,18 @@ async def run_ai_blog_generation(site: str = "ls"):
         )
         meta_template = f"Build Champions on {topic}: how nonprofit legal tech is closing the justice gap."
     else:
-        # ── LitigationSpace: current behavior preserved exactly ──
-        topics = [
-            ("How to Draft an Effective Motion in Limine", "general", "motion in limine tips, MIL drafting, exclude evidence"),
-            ("Federal Rule 56: Summary Judgment Best Practices", "jurisdictional_guide", "FRCP 56, federal summary judgment, rule 56 motion"),
-            ("Discovery Abuse: How to File a Successful Motion to Compel", "general", "motion to compel, discovery abuse, FRCP 37"),
-            ("Texas Rule 166a: State Summary Judgment Guide", "jurisdictional_guide", "Texas Rule 166a, Texas summary judgment, TRCP"),
-            ("5 Evidence Rules Every Litigator Must Know for Motions", "general", "evidence rules motions, FRE litigation, evidence objections"),
-            ("Florida Rule 1.510: Summary Judgment After 2021 Amendment", "jurisdictional_guide", "Florida 1.510, FL summary judgment, Daubert standard"),
-            ("How AI is Changing Motion Practice in 2026", "general", "AI legal technology, motion analysis AI, legal AI tools"),
-            ("Illinois 735 ILCS 5/2-1005: Summary Judgment in Illinois", "jurisdictional_guide", "Illinois summary judgment, 735 ILCS, IL motion practice"),
-            ("Motion to Dismiss Under FRCP 12(b)(6): Complete Guide", "general", "motion to dismiss, 12b6, failure to state a claim"),
-            ("New York CPLR 3212: Summary Judgment in New York", "jurisdictional_guide", "NY summary judgment, CPLR 3212, New York motion practice"),
-            ("Daubert vs Frye: Expert Witness Admissibility Standards", "general", "Daubert standard, Frye test, expert witness motions"),
-            ("California CCP 437c: Summary Judgment California Guide", "jurisdictional_guide", "California summary judgment, CCP 437c, CA motion practice"),
-            ("How to Win a Motion for Preliminary Injunction", "general", "preliminary injunction, TRO, injunctive relief motion"),
-            ("Georgia OCGA 9-11-56: Summary Judgment in Georgia", "jurisdictional_guide", "Georgia summary judgment, OCGA, GA motion practice"),
-            ("Effective Deposition Strategies for Litigators", "general", "deposition tips, deposition strategy, litigation discovery"),
-            ("Ohio Civil Rule 56: Summary Judgment Guide", "jurisdictional_guide", "Ohio summary judgment, Ohio Civ R 56, OH motion practice"),
-            ("Motion for Sanctions Under Rule 11: When and How to File", "general", "Rule 11 sanctions, frivolous litigation, attorney sanctions"),
-            ("Pennsylvania Rule 1035.2: Summary Judgment in PA", "jurisdictional_guide", "Pennsylvania summary judgment, Pa RCP 1035, PA motion practice"),
-            ("Building a Winning Trial Notebook: Litigation Preparation", "general", "trial notebook, trial preparation, litigation organization"),
-            ("Michigan MCR 2.116: Summary Disposition Guide", "jurisdictional_guide", "Michigan summary judgment, MCR 2.116, MI motion practice"),
-            ("Strategic Use of Interrogatories in Complex Litigation", "general", "interrogatories, written discovery, litigation strategy"),
-            ("New Jersey Rule 4:46: Summary Judgment in NJ", "jurisdictional_guide", "NJ summary judgment, Rule 4:46, New Jersey motion practice"),
-            ("Class Action Certification: Motion Practice Guide", "general", "class action, class certification, Rule 23 motion"),
-            ("Virginia Code 8.01-420: Summary Judgment in Virginia", "jurisdictional_guide", "Virginia summary judgment, VA motion practice"),
-            ("How to Draft Effective Pretrial Motions", "general", "pretrial motions, motion practice, litigation preparation"),
-            ("Colorado CRCP 56: Summary Judgment in Colorado", "jurisdictional_guide", "Colorado summary judgment, CRCP 56, CO motion practice"),
-            ("Mediation vs Arbitration: When to File a Motion to Compel", "general", "ADR, mediation, arbitration, motion to compel arbitration"),
-            ("Washington CR 56: Summary Judgment in Washington", "jurisdictional_guide", "Washington summary judgment, CR 56, WA motion practice"),
-            ("Attorney Fee Petitions: Maximizing Recovery Post-Judgment", "general", "attorney fees, fee petition, post-judgment motions"),
-            ("Massachusetts Rule 56: Summary Judgment in MA", "jurisdictional_guide", "Massachusetts summary judgment, Mass R Civ P 56, MA motion practice"),
-            ("Anti-SLAPP Motions: Protecting Free Speech in Litigation", "general", "anti-SLAPP, free speech, strategic lawsuit, motion to strike"),
-            ("Arizona Rule 56: Summary Judgment in Arizona", "jurisdictional_guide", "Arizona summary judgment, Ariz R Civ P 56, AZ motion practice"),
-            ("E-Discovery Best Practices for Modern Litigation", "general", "e-discovery, ESI, electronic discovery, litigation technology"),
-            ("Minnesota Rule 56: Summary Judgment in Minnesota", "jurisdictional_guide", "Minnesota summary judgment, Minn R Civ P 56, MN motion practice"),
-            ("Appellate Motion Practice: Preserving Issues for Appeal", "general", "appellate practice, preserving error, motion for new trial"),
-            ("Maryland Rule 2-501: Summary Judgment in Maryland", "jurisdictional_guide", "Maryland summary judgment, Rule 2-501, MD motion practice"),
-            ("Remote Hearings and Virtual Litigation Best Practices", "general", "remote hearings, virtual litigation, Zoom court, technology"),
-            ("Tennessee Rule 56: Summary Judgment in Tennessee", "jurisdictional_guide", "Tennessee summary judgment, Tenn R Civ P 56, TN motion practice"),
-            ("Litigation Hold Letters: Preserving Evidence Early", "general", "litigation hold, evidence preservation, spoliation sanctions"),
-            ("Indiana Trial Rule 56: Summary Judgment in Indiana", "jurisdictional_guide", "Indiana summary judgment, Trial Rule 56, IN motion practice"),
-        ]
+        # ── LitigationSpace: rotates evenly across every feature (see FEATURE_CATALOG),
+        # not just Motion Analyzer — each feature gets its turn before any repeats.
+        # Skips topics already published so a feature never gets stuck endlessly
+        # returning "Article already exists" ──
         if backfill_mode:
+            with get_db() as _fdb:
+                feature = _pick_feature(_fdb, "blog_articles", site)
             topic, category, keywords = stub["title"], stub["category"] or "general", stub["target_keywords"] or ""
         else:
-            topic, category, keywords = random.choice(topics)
+            with get_db() as _fdb:
+                feature, topic_tuple = _pick_blog_feature_and_topic(_fdb, site)
+            topic, category, keywords = topic_tuple
         system_msg = (
             "You are a legal content expert writing for LitigationSpace.com. Write authoritative, well-researched legal content. "
             "Return ONLY the article body HTML using h2, h3, p, ul, ol, li, strong, a tags. "
@@ -1969,7 +2209,7 @@ async def run_ai_blog_generation(site: str = "ls"):
             f"Write a 1500-word blog article about: {topic}. "
             "Use h2 for the main title, h3 for sections, p for paragraphs, ul/ol/li for lists, "
             "strong for emphasis, and a tags for links. "
-            "Include a CTA linking to /motion-analyzer at the end. "
+            f"Include a CTA linking to {feature['path']} at the end. "
             "Return ONLY the HTML content, no code fences, no document wrapper."
         )
         meta_template = f"Guide to {topic} for litigation attorneys."
@@ -2008,11 +2248,32 @@ async def run_ai_blog_generation(site: str = "ls"):
         content = _re.sub(r'<style[^>]*>.*?</style>', '', content, flags=_re.DOTALL | _re.IGNORECASE)
         content = content.strip()
 
+        # Attach a matching screen-recording (product tour) so the post isn't text-only.
+        # LS-only for now — product_tour_generator's TOURS are all LS product pages.
+        video_row = None
+        if site != "bc":
+            try:
+                with get_db() as _vdb:
+                    video_row = _get_or_create_feature_video(_vdb, feature["product_key"], site)
+            except Exception as e:
+                logger.warning(f"Video attach skipped for blog ({feature['product_key']}): {e}")
+            if video_row:
+                video_embed = (
+                    '<div class="ls-video-embed" style="margin:0 0 24px">'
+                    f'<video controls preload="metadata" '
+                    f'poster="/api/growth/product-tours/public/{video_row["id"]}/thumbnail" '
+                    'style="width:100%;max-width:720px;border-radius:12px" '
+                    f'src="/api/growth/product-tours/public/{video_row["id"]}"></video>'
+                    '</div>'
+                )
+                content = video_embed + content
+
         if backfill_mode:
             with get_db() as db:
                 db.execute(
-                    "UPDATE blog_articles SET content = ?, status = 'published' WHERE id = ?",
-                    (content, stub["id"])
+                    "UPDATE blog_articles SET content = ?, status = 'published', feature_key = ?, video_id = ? WHERE id = ?",
+                    (content, feature["product_key"] if site != "bc" else None,
+                     video_row["id"] if video_row else None, stub["id"])
                 )
             return {"status": "backfilled", "title": topic, "slug": stub["slug"], "website_id": site}
 
@@ -2023,12 +2284,18 @@ async def run_ai_blog_generation(site: str = "ls"):
             if not existing:
                 aid = generate_id()
                 db.execute(
-                    """INSERT INTO blog_articles (id, title, slug, content, category, meta_description, target_keywords, view_count, status, created_at, website_id)
-                       VALUES (?, ?, ?, ?, ?, ?, ?, 0, 'published', ?, ?)""",
+                    """INSERT INTO blog_articles (id, title, slug, content, category, meta_description, target_keywords, view_count, status, created_at, website_id, feature_key, video_id)
+                       VALUES (?, ?, ?, ?, ?, ?, ?, 0, 'published', ?, ?, ?, ?)""",
                     (aid, topic, slug, content, category, meta_template,
-                     keywords, datetime.now(timezone.utc).isoformat(), site)
+                     keywords, datetime.now(timezone.utc).isoformat(), site,
+                     feature["product_key"] if site != "bc" else None,
+                     video_row["id"] if video_row else None)
                 )
-                return {"status": "published", "title": topic, "slug": slug, "website_id": site}
+                return {
+                    "status": "published", "title": topic, "slug": slug, "website_id": site,
+                    "feature": feature["product_key"] if site != "bc" else None,
+                    "video_id": video_row["id"] if video_row else None,
+                }
             else:
                 return {"status": "skipped", "reason": "Article already exists"}
     except Exception as e:
@@ -2084,29 +2351,18 @@ async def run_ai_social_generation(site: str = "ls"):
             "Include a CTA pointing to donate@buildchampions.org or buildchampions.org."
         )
     else:
-        # ── LitigationSpace: current behavior preserved exactly ──
+        # ── LitigationSpace: rotates evenly across every feature (see FEATURE_CATALOG),
+        # not just Motion Analyzer — each feature gets its turn before any repeats ──
         platforms = ["facebook", "facebook", "facebook", "linkedin", "twitter"]
-        topics = [
-            "motion analysis tips for litigation attorneys",
-            "how AI helps lawyers prepare for hearings",
-            "common mistakes in motions for summary judgment",
-            "why litigation firms need motion intelligence",
-            "the future of legal technology in courtrooms",
-            "how to strengthen your motion to dismiss",
-            "expert witness preparation tips",
-            "litigation workflow automation benefits",
-            "preparing for depositions with AI tools",
-            "federal vs state motion practice differences",
-            "how to evaluate win probability for your case",
-            "trial preparation checklist for attorneys",
-        ]
+        with get_db() as _fdb:
+            feature = _pick_feature(_fdb, "social_posts", site)
         platform = random.choice(platforms)
-        topic = random.choice(topics)
+        topic = random.choice(feature["social_topics"])
         system_msg = "You are a legal marketing expert. Write engaging social media content for LitigationSpace.com."
         user_prompt = (
             f"Write a {platform} post about: {topic}. "
             f"{platform_guides[platform]}. "
-            "Include link to litigationspace.com/motion-analyzer."
+            f"Include link to litigationspace.com{feature['path']}."
         )
 
     try:
@@ -2121,16 +2377,34 @@ async def run_ai_social_generation(site: str = "ls"):
         )
         content = response.choices[0].message.content
 
+        # Attach a matching screen-recording (product tour) so Facebook posts carry
+        # video, not text alone. LS-only — product_tour_generator's TOURS are LS pages.
+        # Only needed for Facebook: that's the only platform this backend auto-publishes
+        # (see run_facebook_auto_publish), and Graph API video posting needs a local file.
+        video_row = None
+        if site != "bc" and platform == "facebook":
+            try:
+                with get_db() as _vdb:
+                    video_row = _get_or_create_feature_video(_vdb, feature["product_key"], site)
+            except Exception as e:
+                logger.warning(f"Video attach skipped for social ({feature['product_key']}): {e}")
+
         with get_db() as db:
             pid = generate_id()
             db.execute(
-                """INSERT INTO social_posts (id, platform, content, post_type, status, scheduled_at, created_at, website_id)
-                   VALUES (?, ?, ?, 'text', 'scheduled', ?, ?, ?)""",
+                """INSERT INTO social_posts (id, platform, content, post_type, status, scheduled_at, created_at, website_id, feature_key, video_id)
+                   VALUES (?, ?, ?, 'text', 'scheduled', ?, ?, ?, ?, ?)""",
                 (pid, platform, content, datetime.now(timezone.utc).isoformat(),
-                 datetime.now(timezone.utc).isoformat(), site)
+                 datetime.now(timezone.utc).isoformat(), site,
+                 feature["product_key"] if site != "bc" else None,
+                 video_row["id"] if video_row else None)
             )
 
-        return {"status": "scheduled", "platform": platform, "post_id": pid, "website_id": site}
+        return {
+            "status": "scheduled", "platform": platform, "post_id": pid, "website_id": site,
+            "feature": feature["product_key"] if site != "bc" else None,
+            "video_id": video_row["id"] if video_row else None,
+        }
     except Exception as e:
         logger.error(f"Auto social generation failed: {e}")
         return {"status": "error", "error": str(e)}
@@ -3485,7 +3759,23 @@ async def run_facebook_auto_publish(site: str = "ls"):
 
         for post in posts:
             p = dict(post)
-            result = _publish_to_facebook(p["content"], site=site)
+
+            # If this post has a matching screen-recording attached, publish it as a
+            # native video post instead of a plain text feed post.
+            video_path = None
+            if p.get("video_id"):
+                vrow = db.execute(
+                    "SELECT video_path FROM product_demo_videos WHERE id = ?", (p["video_id"],)
+                ).fetchone()
+                if vrow and vrow["video_path"]:
+                    candidate = os.path.join(PRODUCT_DEMOS_DIR, vrow["video_path"])
+                    if os.path.exists(candidate):
+                        video_path = candidate
+
+            if video_path:
+                result = _publish_video_to_facebook(video_path, p["content"], site=site)
+            else:
+                result = _publish_to_facebook(p["content"], site=site)
 
             if result.get("status") == "published":
                 db.execute(
@@ -3493,7 +3783,7 @@ async def run_facebook_auto_publish(site: str = "ls"):
                     (datetime.now(timezone.utc).isoformat(), p["id"])
                 )
                 published += 1
-                logger.info(f"[{site}] Published Facebook post {p['id']}: {result.get('post_id')}")
+                logger.info(f"[{site}] Published Facebook post {p['id']}: {result.get('post_id') or result.get('url')}")
             else:
                 db.execute(
                     "UPDATE social_posts SET status = 'failed' WHERE id = ?",
@@ -3861,3 +4151,178 @@ async def run_ai_video_generation(site: str = "ls"):
 
         result["publish_results"] = publish_results
         return result
+
+
+# ================================================================
+# PRODUCT TOURS — green arrow pointer demos + Adam VO
+# ================================================================
+
+PRODUCT_DEMOS_DIR = "/var/www/litigationspace-staging/data/product_demos"
+
+
+@router.get("/product-tours/catalog")
+async def product_tours_catalog(current_user: dict = Depends(get_current_user)):
+    from app.services.product_tour_generator import list_tour_catalog
+    return {"items": list_tour_catalog()}
+
+
+@router.get("/product-tours")
+async def list_product_tours(site: str = "ls", limit: int = 50, current_user: dict = Depends(get_current_user)):
+    from app.services.product_tour_generator import ensure_schema
+    with get_db() as db:
+        ensure_schema(db)
+        rows = db.execute(
+            "SELECT * FROM product_demo_videos WHERE website_id = ? ORDER BY created_at DESC LIMIT ?",
+            (site, limit),
+        ).fetchall()
+        items = []
+        for r in rows:
+            d = dict(r)
+            if d.get("script"):
+                try:
+                    d["script"] = json.loads(d["script"])
+                except Exception:
+                    pass
+            items.append(d)
+        return {"items": items, "total": len(items)}
+
+
+@router.post("/product-tours/generate")
+async def generate_one_product_tour(
+    product_key: str = Query(...),
+    site: str = "ls",
+    current_user: dict = Depends(get_current_user),
+):
+    from app.services.product_tour_generator import generate_product_tour, ensure_schema
+    with get_db() as db:
+        ensure_schema(db)
+        result = generate_product_tour(db, product_key=product_key, website_id=site)
+        if result.get("status") != "success":
+            raise HTTPException(status_code=400, detail=result.get("detail") or "Generation failed")
+        return result
+
+
+@router.post("/product-tours/generate-all")
+async def generate_all_product_tours_endpoint(
+    site: str = "ls",
+    current_user: dict = Depends(get_current_user),
+):
+    from app.services.product_tour_generator import generate_all_product_tours, ensure_schema
+    with get_db() as db:
+        ensure_schema(db)
+        return generate_all_product_tours(db, website_id=site)
+
+
+@router.get("/product-tours/{video_id}/download")
+async def download_product_tour(video_id: str, current_user: dict = Depends(get_current_user)):
+    from fastapi.responses import FileResponse
+    from app.services.product_tour_generator import ensure_schema
+    with get_db() as db:
+        ensure_schema(db)
+        row = db.execute("SELECT * FROM product_demo_videos WHERE id = ?", (video_id,)).fetchone()
+        if not row:
+            raise HTTPException(status_code=404, detail="Demo not found")
+        row = dict(row)
+        path = os.path.join(PRODUCT_DEMOS_DIR, row["video_path"] or "")
+        if not os.path.exists(path):
+            raise HTTPException(status_code=404, detail=f"Video file missing: {row.get('video_path')}")
+        # Safe ASCII filename for Content-Disposition
+        safe_name = "".join(
+            ch if ch.isalnum() or ch in ("-", "_", " ") else "_"
+            for ch in (row.get("title") or "product_tour")
+        ).strip().replace(" ", "_")[:80] or "product_tour"
+        return FileResponse(
+            path,
+            media_type="video/mp4",
+            filename=f"{safe_name}.mp4",
+            headers={
+                "Content-Disposition": f'attachment; filename="{safe_name}.mp4"',
+                "Cache-Control": "no-store",
+            },
+        )
+
+
+@router.get("/product-tours/{video_id}/thumbnail")
+async def product_tour_thumbnail(video_id: str):
+    from fastapi.responses import FileResponse
+    with get_db() as db:
+        row = db.execute(
+            "SELECT thumbnail_path FROM product_demo_videos WHERE id = ?",
+            (video_id,),
+        ).fetchone()
+        if not row or not row["thumbnail_path"]:
+            raise HTTPException(status_code=404, detail="Thumbnail not found")
+        path = os.path.join(PRODUCT_DEMOS_DIR, row["thumbnail_path"])
+        if not os.path.exists(path):
+            raise HTTPException(status_code=404, detail="Thumbnail missing")
+        return FileResponse(path, media_type="image/png")
+
+
+@router.get("/product-tours/public/{video_id}")
+async def public_product_tour_video(video_id: str):
+    """Public, unauthenticated video stream — embeds a screen-recording demo in
+    public blog articles (anonymous visitors, unlike /stream which requires auth).
+
+    Path must contain the "/public/" segment: main.py's enforce_internal_dashboard_access
+    middleware exempts /api/growth/* paths on that substring, not on the route's own
+    (absent) auth dependency — a plain "/{video_id}/public" suffix would still 401.
+    """
+    from fastapi.responses import FileResponse
+    with get_db() as db:
+        row = db.execute(
+            "SELECT video_path FROM product_demo_videos WHERE id = ?",
+            (video_id,),
+        ).fetchone()
+        if not row or not row["video_path"]:
+            raise HTTPException(status_code=404, detail="Video not found")
+        path = os.path.join(PRODUCT_DEMOS_DIR, row["video_path"])
+        if not os.path.exists(path):
+            raise HTTPException(status_code=404, detail="Video file missing")
+        return FileResponse(
+            path,
+            media_type="video/mp4",
+            headers={"Cache-Control": "public, max-age=86400"},
+        )
+
+
+@router.get("/product-tours/public/{video_id}/thumbnail")
+async def public_product_tour_thumbnail(video_id: str):
+    """Public, unauthenticated thumbnail — poster image for the blog <video> embed."""
+    from fastapi.responses import FileResponse
+    with get_db() as db:
+        row = db.execute(
+            "SELECT thumbnail_path FROM product_demo_videos WHERE id = ?",
+            (video_id,),
+        ).fetchone()
+        if not row or not row["thumbnail_path"]:
+            raise HTTPException(status_code=404, detail="Thumbnail not found")
+        path = os.path.join(PRODUCT_DEMOS_DIR, row["thumbnail_path"])
+        if not os.path.exists(path):
+            raise HTTPException(status_code=404, detail="Thumbnail missing")
+        return FileResponse(path, media_type="image/png", headers={"Cache-Control": "public, max-age=86400"})
+
+
+@router.get("/product-tours/{video_id}/stream")
+async def stream_product_tour(
+    video_id: str,
+    token: Optional[str] = Query(None),
+    current_user: dict = Depends(get_current_user),
+):
+    """Stream MP4 for in-admin <video> tags. Auth: Bearer header (default)."""
+    from fastapi.responses import FileResponse
+    # If browser passed ?token= (video element cannot set Authorization), re-validate
+    if token:
+        try:
+            from app.utils.auth import decode_token
+            decode_token(token)
+        except Exception:
+            raise HTTPException(status_code=401, detail="Invalid token")
+    with get_db() as db:
+        row = db.execute("SELECT * FROM product_demo_videos WHERE id = ?", (video_id,)).fetchone()
+        if not row:
+            raise HTTPException(status_code=404, detail="Demo not found")
+        path = os.path.join(PRODUCT_DEMOS_DIR, row["video_path"])
+        if not os.path.exists(path):
+            raise HTTPException(status_code=404, detail="Video file missing")
+        return FileResponse(path, media_type="video/mp4")
+

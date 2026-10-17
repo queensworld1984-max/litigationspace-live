@@ -76,6 +76,9 @@ _PREMIUM_TASKS: dict[str, int] = {
     # Document Analyzer
     "document_analysis":            5,
 
+    # Appeal Brief: AI-generated Table of Authorities from a complete brief draft
+    "table_of_authorities":         5,
+
     # War Room (paid only — trial blocked above)
     "war_room":                    30,
 
@@ -116,6 +119,12 @@ _STANDARD_TASKS: dict[str, int] = {
 
     # Document summary
     "document_summary":             2,
+
+    # Record on Appeal / vault: find duplicate or near-duplicate documents
+    "duplicate_detection":          2,
+
+    # Record on Appeal: AI-assisted index title/section formatting instructions
+    "roa_index_instructions":       2,
 
     # Jurisdiction summary
     "jurisdiction_summary":         2,

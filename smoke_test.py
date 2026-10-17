@@ -32,7 +32,7 @@ r = requests.post(f"{BASE}/api/auth/register", json={
 check("Register returns 200", r.status_code == 200, str(r.status_code))
 data = r.json() if r.ok else {}
 check("Returns access_token", bool(data.get("access_token")))
-check("email_verified is False", data.get("user", {}).get("email_verified") == False)
+check("email_verified is True (accounts active immediately)", data.get("user", {}).get("email_verified") == True)
 user_id = data.get("user", {}).get("id", "")
 
 # 2. Get verification token from DB

@@ -1,4 +1,4 @@
-import React, { useState, useEffect, useCallback } from 'react'
+import React, { useState, useEffect, useCallback, useRef } from 'react'
 import { useNavigate } from 'react-router-dom'
 import { useTimer, formatElapsed } from '../contexts/TimerContext'
 import { useAuth } from '../contexts/AuthContext'
@@ -13,8 +13,29 @@ const DARK   = '#0f172a'
 const BORDER = '#334155'
 const MUTED  = '#64748b'
 
+const POS_KEY = 'ls_timer_widget_pos'
+
 function tok() { try { return localStorage.getItem('token') || '' } catch { return '' } }
 function hdrs() { return { Authorization: `Bearer ${tok()}` } }
+
+function readSavedPos(): { x: number; y: number } | null {
+  try {
+    const raw = localStorage.getItem(POS_KEY)
+    if (!raw) return null
+    const p = JSON.parse(raw) as { x?: number; y?: number }
+    if (typeof p.x === 'number' && typeof p.y === 'number') return { x: p.x, y: p.y }
+  } catch { /* ignore */ }
+  return null
+}
+
+function clampPos(x: number, y: number, w = 300, h = 80) {
+  const maxX = Math.max(8, window.innerWidth - w - 8)
+  const maxY = Math.max(8, window.innerHeight - h - 8)
+  return {
+    x: Math.min(Math.max(8, x), maxX),
+    y: Math.min(Math.max(8, y), maxY),
+  }
+}
 
 interface CaseOption   { id: string; title?: string; case_number?: string; status?: string }
 interface ContractOption { id: string; title?: string; client_name?: string; hourly_rate?: number; case_id?: string }
@@ -24,10 +45,103 @@ interface BillableTaskOption {
   invoice_id?: string | null
 }
 
+/** Shared fixed positioning + drag handle for all timer states */
+function useDraggableWidget() {
+  const [pos, setPos] = useState<{ x: number; y: number } | null>(() => readSavedPos())
+  const [dragging, setDragging] = useState(false)
+  const posRef = useRef(pos)
+  const dragRef = useRef<{
+    startX: number; startY: number; origX: number; origY: number; moved: boolean
+  } | null>(null)
+  const didDragRef = useRef(false)
+
+  useEffect(() => { posRef.current = pos }, [pos])
+
+  const defaultBottomRight = useCallback((w = 160, h = 56) => {
+    return {
+      x: Math.max(8, window.innerWidth - w - 20),
+      y: Math.max(8, window.innerHeight - h - 20),
+    }
+  }, [])
+
+  const currentPos = pos ?? defaultBottomRight()
+
+  const onPointerDown = useCallback((e: React.PointerEvent) => {
+    // Only primary button / touch
+    if (e.button !== 0) return
+    // Don't start drag from interactive controls (buttons, inputs, links)
+    const t = e.target as HTMLElement
+    if (t.closest('button, input, select, textarea, a, [data-no-drag]')) return
+
+    const p = posRef.current ?? defaultBottomRight()
+    dragRef.current = {
+      startX: e.clientX,
+      startY: e.clientY,
+      origX: p.x,
+      origY: p.y,
+      moved: false,
+    }
+    didDragRef.current = false
+    setDragging(true)
+    ;(e.currentTarget as HTMLElement).setPointerCapture?.(e.pointerId)
+  }, [defaultBottomRight])
+
+  const onPointerMove = useCallback((e: React.PointerEvent) => {
+    if (!dragRef.current) return
+    const dx = e.clientX - dragRef.current.startX
+    const dy = e.clientY - dragRef.current.startY
+    if (Math.abs(dx) > 4 || Math.abs(dy) > 4) {
+      dragRef.current.moved = true
+      didDragRef.current = true
+    }
+    const next = clampPos(dragRef.current.origX + dx, dragRef.current.origY + dy, 120, 48)
+    posRef.current = next
+    setPos(next)
+  }, [])
+
+  const onPointerUp = useCallback(() => {
+    if (dragRef.current?.moved && posRef.current) {
+      try { localStorage.setItem(POS_KEY, JSON.stringify(posRef.current)) } catch { /* ignore */ }
+    }
+    // Keep didDragRef true briefly so click handlers can ignore this gesture
+    setTimeout(() => { didDragRef.current = false }, 0)
+    dragRef.current = null
+    setDragging(false)
+  }, [])
+
+  const shellStyle = (extra?: React.CSSProperties): React.CSSProperties => ({
+    position: 'fixed',
+    left: currentPos.x,
+    top: currentPos.y,
+    bottom: 'auto',
+    right: 'auto',
+    zIndex: 9999,
+    cursor: dragging ? 'grabbing' : 'grab',
+    userSelect: dragging ? 'none' : undefined,
+    touchAction: 'none',
+    ...extra,
+  })
+
+  const suppressClickIfDragged = useCallback((fn?: () => void) => {
+    if (didDragRef.current) return
+    fn?.()
+  }, [])
+
+  return {
+    shellStyle,
+    onPointerDown,
+    onPointerMove,
+    onPointerUp,
+    dragging,
+    suppressClickIfDragged,
+  }
+}
+
 export default function TimerWidget() {
   const { isAuthenticated } = useAuth()
   const navigate = useNavigate()
   const { timer, elapsedSeconds, running, startTimer, stopTimer, loading } = useTimer()
+  const drag = useDraggableWidget()
 
   const [open,       setOpen]      = useState(false)
   const [collapsed,  setCollapsed] = useState(false)
@@ -86,7 +200,6 @@ export default function TimerWidget() {
     setStarting(true)
     try {
       if (selected.type === 'contract') {
-        // Find the contract to get case_id
         const ctr = contracts.find(c => c.id === selected.id)
         await startTimer({
           case_id:    ctr?.case_id || selected.id,
@@ -96,7 +209,6 @@ export default function TimerWidget() {
           label:       selected.label,
         })
         setOpen(false)
-        // Redirect to billing page for contract context
         navigate('/dashboard/billing')
       } else if (selected.type === 'task') {
         const ctr = contracts.find(c => c.id === selected.contractId)
@@ -131,6 +243,13 @@ export default function TimerWidget() {
 
   if (!isAuthenticated) return null
 
+  const dragHandlers = {
+    onPointerDown: drag.onPointerDown,
+    onPointerMove: drag.onPointerMove,
+    onPointerUp: drag.onPointerUp,
+    onPointerCancel: drag.onPointerUp,
+  }
+
   // ── RUNNING STATE — floating clock ──────────────────────────────────────────
   if (running && timer) {
     const billable = ((elapsedSeconds / 3600) * timer.hourly_rate).toFixed(2)
@@ -140,20 +259,21 @@ export default function TimerWidget() {
         <>
           <style>{`@keyframes twPulse{0%,100%{opacity:1}50%{opacity:0.4}}`}</style>
           <div
-            onClick={() => setCollapsed(false)}
-            title="Expand timer"
-            style={{
-              position: 'fixed', bottom: 20, right: 20, zIndex: 9999,
+            {...dragHandlers}
+            onClick={() => drag.suppressClickIfDragged(() => setCollapsed(false))}
+            title="Drag to move · click to expand"
+            style={drag.shellStyle({
               background: NAVY, border: `2px solid ${GOLD}`, borderRadius: 9999,
               padding: '8px 18px', display: 'flex', alignItems: 'center', gap: 8,
-              cursor: 'pointer', boxShadow: '0 4px 20px rgba(0,0,0,0.5)',
+              boxShadow: '0 4px 20px rgba(0,0,0,0.5)',
               fontFamily: '-apple-system,BlinkMacSystemFont,"Segoe UI",sans-serif',
-            }}
+            })}
           >
             <span style={{ width: 8, height: 8, borderRadius: '50%', background: GREEN, animation: 'twPulse 1.5s infinite', flexShrink: 0 }} />
             <span style={{ color: GOLD, fontWeight: 900, fontSize: 15, letterSpacing: 1, fontVariantNumeric: 'tabular-nums' }}>
               {formatElapsed(elapsedSeconds)}
             </span>
+            <span style={{ color: MUTED, fontSize: 10, marginLeft: 2 }} title="Drag">⠿</span>
           </div>
         </>
       )
@@ -165,20 +285,24 @@ export default function TimerWidget() {
           @keyframes twPulse{0%,100%{opacity:1}50%{opacity:0.4}}
           @keyframes twIn{from{opacity:0;transform:translateY(12px)}to{opacity:1;transform:translateY(0)}}
         `}</style>
-        <div style={{
-          position: 'fixed', bottom: 20, right: 20, zIndex: 9999,
-          background: DARK, border: `2px solid ${GOLD}`, borderRadius: 18,
-          padding: '16px 20px', width: 290,
-          boxShadow: '0 8px 40px rgba(0,0,0,0.6)',
-          fontFamily: '-apple-system,BlinkMacSystemFont,"Segoe UI",sans-serif',
-          animation: 'twIn .25s ease',
-        }}>
+        <div
+          {...dragHandlers}
+          title="Drag to move timer"
+          style={drag.shellStyle({
+            background: DARK, border: `2px solid ${GOLD}`, borderRadius: 18,
+            padding: '16px 20px', width: 290,
+            boxShadow: '0 8px 40px rgba(0,0,0,0.6)',
+            fontFamily: '-apple-system,BlinkMacSystemFont,"Segoe UI",sans-serif',
+            animation: drag.dragging ? undefined : 'twIn .25s ease',
+          })}
+        >
           <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: 10 }}>
             <div style={{ display: 'flex', alignItems: 'center', gap: 6 }}>
               <span style={{ width: 8, height: 8, borderRadius: '50%', background: GREEN, animation: 'twPulse 1.5s infinite' }} />
               <span style={{ color: GREEN, fontSize: 10, fontWeight: 700, textTransform: 'uppercase', letterSpacing: '0.1em' }}>Tracking Time</span>
+              <span style={{ color: MUTED, fontSize: 11, marginLeft: 4 }} title="Drag to move">⠿</span>
             </div>
-            <button onClick={() => setCollapsed(true)} style={{ background: 'none', border: 'none', color: MUTED, fontSize: 16, cursor: 'pointer', padding: '2px 4px' }}>−</button>
+            <button data-no-drag onClick={() => setCollapsed(true)} style={{ background: 'none', border: 'none', color: MUTED, fontSize: 16, cursor: 'pointer', padding: '2px 4px' }}>−</button>
           </div>
 
           <div style={{ textAlign: 'center', color: GOLD, fontSize: 38, fontWeight: 900, letterSpacing: 2, fontVariantNumeric: 'tabular-nums', marginBottom: 4 }}>
@@ -197,6 +321,7 @@ export default function TimerWidget() {
           </div>
 
           <button
+            data-no-drag
             onClick={handleStop} disabled={stopping || loading}
             style={{
               width: '100%', padding: '10px 0', borderRadius: 10, border: 'none',
@@ -219,30 +344,31 @@ export default function TimerWidget() {
       <>
         <style>{`@keyframes twIn{from{opacity:0;transform:translateY(8px)}to{opacity:1;transform:translateY(0)}}`}</style>
         <div
-          onClick={() => setOpen(true)}
-          title="Start a timer"
-          style={{
-            position: 'fixed', bottom: 20, right: 20, zIndex: 9999,
+          {...dragHandlers}
+          onClick={() => drag.suppressClickIfDragged(() => setOpen(true))}
+          title="Drag to move · click to start a timer"
+          style={drag.shellStyle({
             background: DARK, border: `2px solid ${GOLD}40`, borderRadius: 14,
             padding: '11px 20px', display: 'flex', alignItems: 'center', gap: 10,
-            cursor: 'pointer', boxShadow: '0 4px 20px rgba(0,0,0,0.4)',
+            boxShadow: '0 4px 20px rgba(0,0,0,0.4)',
             fontFamily: '-apple-system,BlinkMacSystemFont,"Segoe UI",sans-serif',
-            animation: 'twIn .3s ease',
-            transition: 'border-color .2s, box-shadow .2s',
-          }}
+            animation: drag.dragging ? undefined : 'twIn .3s ease',
+            transition: drag.dragging ? undefined : 'border-color .2s, box-shadow .2s',
+          })}
           onMouseEnter={e => {
-            (e.currentTarget as HTMLElement).style.borderColor = GOLD
+            if (drag.dragging) return
+            ;(e.currentTarget as HTMLElement).style.borderColor = GOLD
             ;(e.currentTarget as HTMLElement).style.boxShadow = '0 6px 28px rgba(245,166,35,0.25)'
           }}
           onMouseLeave={e => {
-            (e.currentTarget as HTMLElement).style.borderColor = `${GOLD}40`
+            ;(e.currentTarget as HTMLElement).style.borderColor = `${GOLD}40`
             ;(e.currentTarget as HTMLElement).style.boxShadow = '0 4px 20px rgba(0,0,0,0.4)'
           }}
         >
           <span style={{ fontSize: 20 }}>⏱</span>
           <div>
             <div style={{ color: GOLD, fontWeight: 700, fontSize: 13 }}>Start Timer</div>
-            <div style={{ color: MUTED, fontSize: 10 }}>Track billable time</div>
+            <div style={{ color: MUTED, fontSize: 10 }}>Drag to move · track billable time</div>
           </div>
           <span style={{ color: GOLD, fontSize: 18, marginLeft: 4 }}>▶</span>
         </div>
@@ -254,27 +380,30 @@ export default function TimerWidget() {
   return (
     <>
       <style>{`@keyframes twIn{from{opacity:0;transform:translateY(12px)}to{opacity:1;transform:translateY(0)}}`}</style>
-      <div style={{
-        position: 'fixed', bottom: 20, right: 20, zIndex: 9999,
-        background: DARK, border: `2px solid ${GOLD}`, borderRadius: 18,
-        width: 340, maxHeight: '70vh', display: 'flex', flexDirection: 'column',
-        boxShadow: '0 12px 48px rgba(0,0,0,0.6)',
-        fontFamily: '-apple-system,BlinkMacSystemFont,"Segoe UI",sans-serif',
-        animation: 'twIn .25s ease',
-        overflow: 'hidden',
-      }}>
+      <div
+        {...dragHandlers}
+        style={drag.shellStyle({
+          background: DARK, border: `2px solid ${GOLD}`, borderRadius: 18,
+          width: 340, maxHeight: '70vh', display: 'flex', flexDirection: 'column',
+          boxShadow: '0 12px 48px rgba(0,0,0,0.6)',
+          fontFamily: '-apple-system,BlinkMacSystemFont,"Segoe UI",sans-serif',
+          animation: drag.dragging ? undefined : 'twIn .25s ease',
+          overflow: 'hidden',
+        })}
+      >
 
-        {/* Header */}
+        {/* Header — drag handle area */}
         <div style={{ padding: '14px 18px', borderBottom: `1px solid ${BORDER}`, display: 'flex', justifyContent: 'space-between', alignItems: 'center', flexShrink: 0 }}>
           <div style={{ display: 'flex', alignItems: 'center', gap: 8 }}>
             <span style={{ fontSize: 18 }}>⏱</span>
             <span style={{ color: GOLD, fontWeight: 800, fontSize: 14 }}>Start Timer</span>
+            <span style={{ color: MUTED, fontSize: 11 }} title="Drag to move">⠿</span>
           </div>
-          <button onClick={() => { setOpen(false); setSelected(null); resetTaskPicker() }} style={{ background: 'none', border: 'none', color: MUTED, fontSize: 18, cursor: 'pointer' }}>✕</button>
+          <button data-no-drag onClick={() => { setOpen(false); setSelected(null); resetTaskPicker() }} style={{ background: 'none', border: 'none', color: MUTED, fontSize: 18, cursor: 'pointer' }}>✕</button>
         </div>
 
         {/* Tabs */}
-        <div style={{ display: 'flex', borderBottom: `1px solid ${BORDER}`, flexShrink: 0 }}>
+        <div data-no-drag style={{ display: 'flex', borderBottom: `1px solid ${BORDER}`, flexShrink: 0 }}>
           {(['case', 'contract', 'task'] as const).map(t => (
             <button key={t} onClick={() => { setPickerTab(t); setSelected(null); resetTaskPicker() }}
               style={{
@@ -289,7 +418,7 @@ export default function TimerWidget() {
         </div>
 
         {/* List */}
-        <div style={{ overflowY: 'auto', flex: 1 }}>
+        <div data-no-drag style={{ overflowY: 'auto', flex: 1, cursor: 'default' }}>
           {loadingData ? (
             <div style={{ padding: '24px', textAlign: 'center', color: MUTED, fontSize: 13 }}>Loading…</div>
           ) : pickerTab === 'case' ? (
@@ -437,7 +566,7 @@ export default function TimerWidget() {
 
         {/* Footer — rate + start button (shown when something selected) */}
         {selected && (
-          <div style={{ padding: '12px 16px', borderTop: `1px solid ${BORDER}`, flexShrink: 0, background: '#080e1a' }}>
+          <div data-no-drag style={{ padding: '12px 16px', borderTop: `1px solid ${BORDER}`, flexShrink: 0, background: '#080e1a', cursor: 'default' }}>
             <div style={{ marginBottom: 8, fontSize: 11, color: MUTED }}>
               Selected: <span style={{ color: GOLD, fontWeight: 600 }}>{selected.label}</span>
               {(selected.type === 'contract' || selected.type === 'task') && <span style={{ color: MUTED }}> — will redirect to Billable Tasks</span>}
