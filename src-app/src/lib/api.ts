@@ -575,3 +575,22 @@ export const trackingAPI = {
   }) => api.post('/tracking/pageview', data).catch(() => {}),
   getStats: (days = 30) => api.get('/tracking/stats', { params: { days } }),
 }
+
+export const liveBenchAPI = {
+  roles:        () => api.get('/livebench/roles'),
+  stats:        () => api.get('/livebench/stats'),
+  join:         (data: Record<string, unknown>) => api.post('/livebench/join', data),
+  me:           () => api.get('/livebench/me'),
+  updateMe:     (data: Record<string, unknown>) => api.put('/livebench/me', data),
+  setAvailability: (availability: 'OPEN' | 'BUSY' | 'OFFLINE') => api.post('/livebench/me/availability', { availability }),
+  heartbeat:    () => api.post('/livebench/me/heartbeat'),
+  uploadId:     (file: File) => {
+    const fd = new FormData()
+    fd.append('file', file)
+    return api.post('/livebench/me/id-document', fd, { headers: { 'Content-Type': 'multipart/form-data' } })
+  },
+  professionalDashboard: () => api.get('/bench/dashboard/professional'),
+  adminWorkers: (flagged?: boolean) => api.get('/livebench/admin/workers', { params: flagged ? { flagged: true } : {} }),
+  adminAction:  (id: string, action: string, note?: string) => api.post(`/livebench/admin/workers/${id}`, { action, note }),
+  adminIdDocumentUrl: (id: string) => `/api/livebench/admin/workers/${id}/id-document`,
+}

@@ -898,11 +898,26 @@ async def public_live_bench_profiles(
     offset: int = Query(0, ge=0),
     featured: Optional[bool] = None,
     specialty: Optional[str] = None,
+    role: Optional[str] = None,
+    page: Optional[int] = Query(None, ge=1),
+    min_rate: Optional[float] = None,
+    max_rate: Optional[float] = None,
 ):
-    """Public profiles used to populate /live-bench and homepage cards."""
+    """Public profiles used to populate /live-bench and homepage cards.
+
+    Real workers (source='member') always come first, Open ones at the top.
+    Sample profiles are hidden once HIDE_SAMPLES_AT real workers have joined."""
+    from app.routers.live_bench_workers import (
+        ensure_member_columns, samples_hidden, public_profile, OPEN_TIMEOUT,
+    )
+    if page:
+        offset = (page - 1) * limit
     with get_db() as db:
-        query = "SELECT * FROM live_bench_profiles WHERE 1=1"
+        ensure_member_columns(db)
+        query = "SELECT * FROM live_bench_profiles WHERE COALESCE(suspended,0)=0"
         params: list = []
+        if samples_hidden(db):
+            query += " AND source='member'"
 
         if featured is True:
             query += " AND featured = 1"
@@ -911,26 +926,32 @@ async def public_live_bench_profiles(
         if specialty:
             query += " AND specialty LIKE ?"
             params.append(f"%{specialty}%")
+        if role:
+            query += " AND (role LIKE ? OR specialty LIKE ?)"
+            params.extend([f"%{role}%", f"%{role}%"])
+        if min_rate is not None:
+            query += " AND rate >= ?"
+            params.append(min_rate)
+        if max_rate is not None:
+            query += " AND rate <= ?"
+            params.append(max_rate)
 
         total = db.execute(
             "SELECT COUNT(*) as cnt FROM (" + query + ")",
             params,
         ).fetchone()["cnt"]
 
-        query += " ORDER BY featured DESC, created_at DESC LIMIT ? OFFSET ?"
-        params.extend([limit, offset])
+        fresh = (datetime.now(timezone.utc) - OPEN_TIMEOUT).isoformat()
+        query += (
+            " ORDER BY (source='member') DESC,"
+            " (source='member' AND availability='OPEN' AND last_heartbeat >= ?) DESC,"
+            " (source='member' AND availability='BUSY') DESC,"
+            " featured DESC, created_at DESC LIMIT ? OFFSET ?"
+        )
+        params.extend([fresh, limit, offset])
         rows = db.execute(query, params).fetchall()
 
-    items: list[dict] = []
-    for r in rows:
-        d = dict(r)
-        try:
-            d["jurisdictions"] = json.loads(d.get("jurisdictions_json") or "[]")
-        except Exception:
-            d["jurisdictions"] = []
-        d.pop("jurisdictions_json", None)
-        items.append(d)
-
+    items = [public_profile(dict(r)) for r in rows]
     return {"items": items, "total": total, "limit": limit, "offset": offset}
 
 

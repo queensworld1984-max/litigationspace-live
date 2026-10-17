@@ -44,6 +44,8 @@ import AdminUsers from './pages/AdminUsers'
 import DashboardBilling from './pages/DashboardBilling'
 import DashboardTeam from './pages/DashboardTeam'
 import JoinLiveBench from './pages/JoinLiveBench'
+import LiveBenchWorker from './pages/LiveBenchWorker'
+import AdminLiveBench from './pages/AdminLiveBench'
 import AboutBuildChampions from './pages/AboutBuildChampions'
 import Brand from './pages/Brand'
 import DocumentReview from './pages/DocumentReview'
@@ -118,6 +120,7 @@ function AppRoutes() {
       <Route path="/legal-database" element={<LegalDatabase />} />
 
       {/* Live Bench — requires login */}
+      <Route path="/live-bench/me" element={<RequireAuth><ErrorBoundary><LiveBenchWorker /></ErrorBoundary></RequireAuth>} />
       <Route path="/live-bench" element={<RequireAuth><LiveBench /></RequireAuth>} />
       <Route path="/marketplace" element={<RequireAuth><LiveBench /></RequireAuth>} />
       <Route path="/bench/inbox" element={<BenchInbox />} />
@@ -207,6 +210,7 @@ function AppRoutes() {
       <Route path="/admin/growth-dashboard" element={<RequireAdmin><ErrorBoundary><AdminGrowthOS /></ErrorBoundary></RequireAdmin>} />
       <Route path="/admin/analytics"        element={<RequireAdmin><ErrorBoundary><AdminAnalytics /></ErrorBoundary></RequireAdmin>} />
       <Route path="/admin/support"          element={<RequireAdmin><ErrorBoundary><AdminSupport /></ErrorBoundary></RequireAdmin>} />
+      <Route path="/admin/live-bench"       element={<RequireAdmin><ErrorBoundary><AdminLiveBench /></ErrorBoundary></RequireAdmin>} />
       <Route path="/admin/users"            element={<RequireAdmin><ErrorBoundary><AdminUsers /></ErrorBoundary></RequireAdmin>} />
 
       {/* ── Catch-all ───────────────────────────────────────────────────────── */}

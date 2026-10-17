@@ -13,6 +13,7 @@ interface AuthContextValue {
   login: (email: string, password: string) => Promise<void>
   register: (data: RegisterRequest) => Promise<{ needsVerification: boolean }>
   logout: () => void
+  startSession: (accessToken: string, userData: User) => void
   refreshUser: () => Promise<void>
 }
 
@@ -105,6 +106,15 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
     return { needsVerification: !userData.email_verified }
   }
 
+  const startSession = (accessToken: string, userData: User) => {
+    localStorage.setItem('token', accessToken)
+    localStorage.setItem('user', JSON.stringify(userData))
+    flushSync(() => {
+      setToken(accessToken)
+      setUser(userData)
+    })
+  }
+
   const logout = () => {
     localStorage.removeItem('token')
     localStorage.removeItem('user')
@@ -123,6 +133,7 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
       login,
       register,
       logout,
+      startSession,
       refreshUser,
     }}>
       {children}

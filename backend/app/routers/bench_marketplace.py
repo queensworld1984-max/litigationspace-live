@@ -237,6 +237,13 @@ async def create_engagement(req: dict, current_user: dict = Depends(get_current_
              req.get("notes"),
              now, now)
         )
+        try:
+            from app.routers.live_bench_workers import notify_worker_of_request
+            client = db.execute("SELECT full_name FROM users WHERE id=?", (client_id,)).fetchone()
+            notify_worker_of_request(db, professional_id, (client["full_name"] if client else "A lawyer"),
+                                     req.get("title", "Legal Task Request"))
+        except Exception as _e:
+            logger.warning(f"worker notify skipped: {_e}")
     return {"engagement_id": eid, "status": "sent", "message": "Request sent to professional."}
 
 
@@ -717,7 +724,11 @@ async def list_profiles(
 ):
     """List Live Bench profiles with remote-first filters."""
     with get_db() as db:
-        conditions = ["status = 'READY'"]
+        from app.routers.live_bench_workers import ensure_member_columns, samples_hidden, public_profile
+        ensure_member_columns(db)
+        conditions = ["status = 'READY'", "COALESCE(suspended,0)=0"]
+        if samples_hidden(db):
+            conditions.append("source='member'")
         params: list = []
 
         if role:
@@ -736,14 +747,14 @@ async def list_profiles(
         where = " AND ".join(conditions)
         offset = (page - 1) * limit
         rows = db.execute(
-            f"SELECT * FROM live_bench_profiles WHERE {where} ORDER BY featured DESC, rating DESC LIMIT ? OFFSET ?",
+            f"SELECT * FROM live_bench_profiles WHERE {where} ORDER BY (source='member') DESC, featured DESC, rating DESC LIMIT ? OFFSET ?",
             params + [limit, offset]
         ).fetchall()
         total = db.execute(f"SELECT COUNT(*) FROM live_bench_profiles WHERE {where}", params).fetchone()[0]
 
         profiles = []
         for r in rows:
-            d = dict(r)
+            d = public_profile(dict(r))
             # Add remote-first computed fields
             d["remote_available"] = True
             d["accepts_negotiation"] = True
@@ -751,10 +762,6 @@ async def list_profiles(
             d["estimated_response"] = "< 2 hours"
             d["minimum_booking"] = "30 minutes"
             d["completed_jobs"]  = 0
-            try:
-                d["jurisdictions"] = _json.loads(d.get("jurisdictions_json") or "[]")
-            except Exception:
-                d["jurisdictions"] = []
             profiles.append(d)
 
         return {"profiles": profiles, "total": total, "page": page, "pages": -(-total // limit)}
@@ -831,4 +838,11 @@ async def send_direct_message(req: dict, current_user: dict = Depends(get_curren
             "INSERT INTO bench_messages (id, engagement_id, sender_id, sender_role, content, files_json, created_at) VALUES (?,?,?,?,?,?,?)",
             (mid, eid, uid, "client", message_text, "[]", now)
         )
+        try:
+            from app.routers.live_bench_workers import notify_worker_of_request
+            client = db.execute("SELECT full_name FROM users WHERE id=?", (uid,)).fetchone()
+            notify_worker_of_request(db, professional_id, (client["full_name"] if client else "A lawyer"),
+                                     "Direct message")
+        except Exception as _e:
+            logger.warning(f"worker notify skipped: {_e}")
     return {"engagement_id": eid, "message_id": mid, "status": "sent"}

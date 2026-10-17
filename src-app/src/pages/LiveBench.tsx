@@ -4,7 +4,7 @@ import Navbar from '../components/Navbar'
 import Footer from '../components/Footer'
 import Sidebar from '../components/Sidebar'
 import { useAuth } from '../contexts/AuthContext'
-import { benchProfilesAPI, casesAPI, benchAPI } from '../lib/api'
+import { benchProfilesAPI, casesAPI, benchAPI, liveBenchAPI } from '../lib/api'
 import axios from 'axios'
 import SEO from '../components/SEO'
 
@@ -94,6 +94,8 @@ interface Profile {
   accepts_negotiation?: boolean; available_start?: string
   estimated_response?: string; minimum_booking?: string
   completed_jobs?: number
+  is_member?: boolean; availability?: string; currency?: string; languages?: string
+  id_verified?: boolean; phone_verified?: boolean
 }
 
 interface Engagement {
@@ -486,6 +488,10 @@ function ProfileCard({ profile, onHire, onDM }: { profile: Profile; onHire: () =
   const { isAuthenticated } = useAuth()
   const navigate = useNavigate()
   const [expanded, setExpanded] = useState(false)
+  const member = !!profile.is_member
+  const avail = member ? (profile.availability || 'OFFLINE') : 'OPEN'
+  const availColor = avail === 'OPEN' ? GREEN : avail === 'BUSY' ? ACCENT : T3
+  const availLabel = avail === 'OPEN' ? 'Open now' : avail === 'BUSY' ? 'Busy' : 'Offline'
   const jurisdictions: string[] = profile.jurisdictions || (() => {
     try { return JSON.parse(profile.jurisdictions_json || '[]') } catch { return [] }
   })()
@@ -510,14 +516,16 @@ function ProfileCard({ profile, onHire, onDM }: { profile: Profile; onHire: () =
               style={{ width: 56, height: 56, borderRadius: 12, objectFit: 'cover', border: `2px solid ${BD2}` }}
               onError={e => { (e.target as HTMLImageElement).src = `https://api.dicebear.com/7.x/initials/svg?seed=${encodeURIComponent(profile.name)}` }}
             />
-            <span style={{ position: 'absolute', bottom: -4, right: -4, width: 14, height: 14, borderRadius: '50%', background: GREEN, border: `2px solid ${CARD}` }} title="Available" />
+            <span style={{ position: 'absolute', bottom: -4, right: -4, width: 14, height: 14, borderRadius: '50%', background: availColor, border: `2px solid ${CARD}` }} title={availLabel} />
           </div>
 
           {/* Name + role */}
           <div style={{ flex: 1, minWidth: 0 }}>
             <div style={{ fontWeight: 800, fontSize: 15, color: T1, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>{profile.name}</div>
             <div style={{ fontSize: 12, color: ACCENT, fontWeight: 600, marginBottom: 4 }}>{profile.role}</div>
-            <Stars n={profile.rating} />
+            {member ? (
+              <div style={{ fontSize: 11, fontWeight: 700, color: availColor }}>● {availLabel}</div>
+            ) : <Stars n={profile.rating} />}
           </div>
 
           {/* Status */}
@@ -528,9 +536,20 @@ function ProfileCard({ profile, onHire, onDM }: { profile: Profile; onHire: () =
 
         {/* Remote badges row */}
         <div style={{ display: 'flex', flexWrap: 'wrap', gap: 5, marginBottom: 10 }}>
-          <Badge text="🌐 Remote Freelancer" color={GREEN} />
-          <Badge text="⚡ Accepts Negotiation" color={BLUE} />
-          <Badge text="🕐 Responds < 2hr" color={T2} />
+          {member ? (
+            <>
+              <Badge text="✓ Live Bench member" color={GREEN} />
+              {profile.id_verified && <Badge text="🪪 ID verified" color={BLUE} />}
+              {profile.phone_verified && <Badge text="📱 Phone verified" color={BLUE} />}
+              {profile.languages && <Badge text={`🗣 ${profile.languages}`} color={T2} />}
+            </>
+          ) : (
+            <>
+              <Badge text="🌐 Remote Freelancer" color={GREEN} />
+              <Badge text="⚡ Accepts Negotiation" color={BLUE} />
+              <Badge text="🕐 Responds < 2hr" color={T2} />
+            </>
+          )}
           {profile.experience > 0 && <Badge text={`${profile.experience}y exp`} color={T3} />}
           {profile.cases > 0 && <Badge text={`${profile.cases} cases`} color={T3} />}
         </div>
@@ -553,7 +572,7 @@ function ProfileCard({ profile, onHire, onDM }: { profile: Profile; onHire: () =
         {/* Min booking + start */}
         <div style={{ display: 'flex', gap: 16, fontSize: 11, color: T3, marginBottom: 14 }}>
           <span>⏱ Min 30 min</span>
-          <span>🗓 Starts: Immediately</span>
+          <span>🗓 {member ? (avail === 'OPEN' ? 'Available now' : 'Message to schedule') : 'Starts: Immediately'}</span>
           <span>📦 {profile.specialty}</span>
         </div>
 
@@ -588,7 +607,7 @@ function ProfileCard({ profile, onHire, onDM }: { profile: Profile; onHire: () =
       {expanded && (
         <div style={{ padding: '14px 20px 18px', borderTop: `1px solid ${BD}`, background: SURFACE }}>
           <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: 12, fontSize: 12 }}>
-            <div><span style={{ color: T3 }}>Available:</span> <span style={{ color: GREEN, fontWeight: 600 }}>Immediately</span></div>
+            <div><span style={{ color: T3 }}>Available:</span> <span style={{ color: availColor, fontWeight: 600 }}>{member ? availLabel : 'Immediately'}</span></div>
             <div><span style={{ color: T3 }}>Min Booking:</span> <span style={{ color: T1 }}>30 minutes</span></div>
             <div><span style={{ color: T3 }}>Delivery:</span> <span style={{ color: T1 }}>Remote — negotiated</span></div>
             <div><span style={{ color: T3 }}>Experience:</span> <span style={{ color: T1 }}>{profile.experience} years</span></div>
@@ -748,7 +767,10 @@ function MyEngagements() {
 // ── Main Page ─────────────────────────────────────────────────────────────────
 
 export default function LiveBench() {
-  const { isAuthenticated } = useAuth()
+  const { isAuthenticated, user } = useAuth()
+  const isWorker = (user?.role || '').startsWith('expert')
+  const [stats, setStats] = useState<{ members: number; open_now: number } | null>(null)
+  useEffect(() => { liveBenchAPI.stats().then(r => setStats(r.data as { members: number; open_now: number })).catch(() => {}) }, [])
   const [profiles, setProfiles] = useState<Profile[]>([])
   const [loading, setLoading]   = useState(true)
   const [total, setTotal]       = useState(0)
@@ -822,6 +844,20 @@ export default function LiveBench() {
             {['✓ Remote-first delivery', '✓ Negotiate scope & timeline', '✓ Payment held until you approve', '✓ Jurisdiction expertise included'].map(f => (
               <span key={f} style={{ background: `${BD}`, padding: '5px 12px', borderRadius: 20, border: `1px solid ${BD}` }}>{f}</span>
             ))}
+          </div>
+          <div style={{ display: 'flex', flexWrap: 'wrap', gap: 10, alignItems: 'center', marginTop: 22 }}>
+            {isWorker ? (
+              <Link to="/live-bench/me" style={{ background: GREEN, color: '#000', fontWeight: 800, fontSize: 13, padding: '10px 20px', borderRadius: 10, textDecoration: 'none' }}>
+                My worker dashboard →
+              </Link>
+            ) : (
+              <Link to="/join-live-bench" style={{ background: ACCENT, color: '#000', fontWeight: 800, fontSize: 13, padding: '10px 20px', borderRadius: 10, textDecoration: 'none' }}>
+                Legal professional? Join free and get hired →
+              </Link>
+            )}
+            {stats && stats.open_now > 0 && (
+              <span style={{ fontSize: 12, color: GREEN, fontWeight: 700 }}>● {stats.open_now} member{stats.open_now === 1 ? '' : 's'} open now</span>
+            )}
           </div>
         </div>
       </div>

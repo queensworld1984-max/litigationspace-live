@@ -379,3 +379,6 @@ async def get_stats():
         "experts_ready": experts_ready,
         "total_documents": docs,
     }
+
+from app.routers import live_bench_workers as _live_bench_workers  # noqa: E402
+app.include_router(_live_bench_workers.router)
