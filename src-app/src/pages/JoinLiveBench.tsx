@@ -79,7 +79,7 @@ export default function JoinLiveBench() {
     }
   }
 
-  const inp = 'w-full rounded-lg border border-gray-200 px-3.5 py-2.5 text-sm focus:outline-none focus:ring-2 focus:ring-amber-400'
+  const inp = 'w-full rounded-lg border border-gray-200 bg-white text-gray-900 placeholder-gray-400 px-3.5 py-2.5 text-sm focus:outline-none focus:ring-2 focus:ring-amber-400'
   const lbl = 'block text-sm font-medium text-gray-700 mb-1'
   const grid = 'grid grid-cols-1 sm:grid-cols-2 gap-4'
 
